@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>ScrapManagement - スクラップ処分記録</title>
+  <link rel="stylesheet" href="src/css/style.css">
+  <link rel="stylesheet" href="src/css/print.css">
+</head>
+<body>
+  <!-- アプリヘッダー -->
+  <header class="app-header no-print">
+    <div class="brand-container">
+      <h1 class="brand-title">ScrapManagement</h1>
+      <span id="mock-warning-badge" class="badge-mock" style="display:none;">MOCKモード</span>
+    </div>
+  </header>
+
+  <!-- メインコンテンツ -->
+  <main class="main-container no-print">
+    <!-- タブナビゲーション (通常利用者向け 3機能のみ) -->
+    <nav class="tab-nav">
+      <button class="tab-btn active" id="tab-btn-create" onclick="switchTab('create')">伝票入力</button>
+      <button class="tab-btn" id="tab-btn-history" onclick="switchTab('history')">処分履歴</button>
+      <button class="tab-btn" id="tab-btn-summary" onclick="switchTab('summary')">集計</button>
+    </nav>
+
+    <!-- 画面1: 伝票入力画面 (スマホ最適化) -->
+    <section id="view-create" class="view-panel">
+      <!-- 拠点 & 担当・業者情報カード -->
+      <div class="card">
+        <h2 class="card-title">1. 拠点・担当・引取業者情報</h2>
+        <div class="form-grid">
+          <!-- BaseCode 入力 -->
+          <div class="form-group">
+            <label class="form-label" for="base-code-input">拠点コード <span style="color:var(--color-danger)">*</span></label>
+            <input type="text" id="base-code-input" class="form-input" placeholder="例: B01, B19" autocomplete="off" autocapitalize="characters" required>
+            <div id="base-code-autocomplete" class="autocomplete-box"></div>
+          </div>
+          <!-- BaseName 自動表示 (編集不可) -->
+          <div class="form-group">
+            <label class="form-label" for="base-name-display">拠点名 (自動表示)</label>
+            <input type="text" id="base-name-display" class="form-input" placeholder="拠点コードを入力すると自動表示" readonly>
+          </div>
+          <!-- 担当者名 (株式会社タカミヤ側) -->
+          <div class="form-group">
+            <label class="form-label" for="staff-name-input">株式会社タカミヤ 担当者名 <span style="color:var(--color-danger)">*</span></label>
+            <input type="text" id="staff-name-input" class="form-input" placeholder="例: 山田 太郎" required>
+          </div>
+          <!-- スクラップ引取業者名 -->
+          <div class="form-group">
+            <label class="form-label" for="vendor-name-input">スクラップ引取業者名 <span style="color:var(--color-danger)">*</span></label>
+            <input type="text" id="vendor-name-input" class="form-input" placeholder="例: ○○金属株式会社" required>
+          </div>
+        </div>
+      </div>
+
+      <!-- 資材コード品入力カード -->
+      <div class="card">
+        <h2 class="card-title">2. 資材コード品入力</h2>
+        <div class="form-grid" style="margin-bottom:0.75rem;">
+          <div class="form-group" style="flex:1;">
+            <label class="form-label" for="item-code-input">資材コード</label>
+            <input type="text" id="item-code-input" class="form-input" placeholder="例: P48640, IQST38, CLFX01" autocomplete="off" autocapitalize="characters">
+            <div id="item-code-autocomplete" class="autocomplete-box"></div>
+          </div>
+          <div class="form-group" style="flex:2;">
+            <label class="form-label" for="item-name-display">品名 (自動表示・編集不可)</label>
+            <input type="text" id="item-name-display" class="form-input" placeholder="コード入力で自動補完" readonly>
+          </div>
+          <div class="form-group" style="flex:1;">
+            <label class="form-label" for="item-qty-input">数量 (加算式・一式可)</label>
+            <input type="text" id="item-qty-input" class="form-input" placeholder="例: 10, 10+5, 一式">
+          </div>
+        </div>
+        <button type="button" class="btn btn-secondary" style="width:100%;" onclick="addCodeItemFromForm()">資材明細に追加</button>
+
+        <div class="materials-table-wrapper" style="margin-top:1rem;">
+          <table class="materials-table responsive-table compact-horizontal-table">
+            <thead>
+              <tr>
+                <th class="col-code">資材コード</th>
+                <th class="col-name">資材名</th>
+                <th class="col-qty">数量</th>
+                <th class="col-weight">重量</th>
+                <th class="col-delete">操作</th>
+              </tr>
+            </thead>
+            <tbody id="code-items-tbody">
+              <!-- 動的明細行 -->
+            </tbody>
+          </table>
+        </div>
+
+        <!-- スマホ専用 推定積載重量サマリーカード (帳票非表示) -->
+        <div class="weight-summary-card">
+          <div class="weight-display-large" id="weight-display-text">推定積載重量: 0 kg</div>
+          <div class="weight-meta-text" id="weight-meta-counts">重量計算対象: 0品目 / 重量未登録: 0品目</div>
+          <div class="weight-notice-text">※ 重量未登録資材、定型品、その他品は総重量に含まれていません。</div>
+        </div>
+      </div>
+
+      <!-- 定型品セクション (Fixed Items) -->
+      <div class="card">
+        <h2 class="card-title">3. 定型品入力</h2>
+        <div class="materials-table-wrapper">
+          <table class="materials-table">
+            <thead>
+              <tr>
+                <th style="width:65%;">定型品名</th>
+                <th style="width:35%;">数量 (加算式・一式可)</th>
+              </tr>
+            </thead>
+            <tbody id="fixed-items-tbody">
+              <!-- 定型品マスタから展開 -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- その他品セクション (Other Items) -->
+      <div class="card">
+        <h2 class="card-title">4. その他品目入力 (自由入力)</h2>
+        <div class="form-grid" style="margin-bottom:0.75rem;">
+          <div class="form-group" style="flex:2;">
+            <label class="form-label" for="other-name-input">品名 (自由入力)</label>
+            <input type="text" id="other-name-input" class="form-input" placeholder="例: 特殊加工鉄くず">
+          </div>
+          <div class="form-group" style="flex:1;">
+            <label class="form-label" for="other-qty-input">数量 (加算式・一式可)</label>
+            <input type="text" id="other-qty-input" class="form-input" placeholder="例: 5, 一式">
+          </div>
+        </div>
+        <button type="button" class="btn btn-secondary" style="width:100%;" onclick="addOtherItemFromForm()">その他品目に追加</button>
+
+        <div class="materials-table-wrapper" style="margin-top:1rem;">
+          <table class="materials-table responsive-table compact-horizontal-table">
+            <thead>
+              <tr>
+                <th class="col-name">品名</th>
+                <th class="col-qty">数量</th>
+                <th class="col-delete">操作</th>
+              </tr>
+            </thead>
+            <tbody id="other-items-tbody">
+              <!-- その他品目行 -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- スクラップ業者単独確認署名カード (モーダル方式 & 完了後大画面プレビュー) -->
+      <div class="card">
+        <h2 class="card-title">5. スクラップ引取業者 確認署名 (任意)</h2>
+        
+        <!-- 未署名表示 -->
+        <div id="signature-unsigned-view" class="signature-trigger-box">
+          <button type="button" class="btn btn-secondary" id="btn-open-signature-modal" onclick="openSignatureModal()">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:0.4rem; vertical-align:text-bottom;"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+            業者署名を入力する
+          </button>
+          <div style="margin-top:0.5rem; font-size:0.8rem; color:var(--color-text-muted);">
+            ※ 署名なしでも完了可能です (印刷後に手書き署名可)
+          </div>
+        </div>
+
+        <!-- 署名完了後の大画面プレビュー表示 -->
+        <div id="signature-signed-view" style="display:none;">
+          <div class="signature-large-preview-container">
+            <img id="signature-large-preview-img" alt="業者受取署名" class="signature-large-preview-img">
+          </div>
+          <div class="signature-signed-actions">
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-re-signature" onclick="openSignatureModal()">入力する</button>
+            <button type="button" class="btn btn-danger btn-sm" id="btn-clear-signature" onclick="confirmClearSignature()">解除</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- フォーム下部アクションボタン (Document Flow内 最下部配置) -->
+      <div class="bottom-action-bar no-print">
+        <div class="action-bar-inner">
+          <button type="button" class="btn btn-secondary" onclick="saveTemporaryDraft()">一時保存</button>
+          <button type="button" class="btn btn-primary" id="btn-finalize" onclick="handleFinalizeButton()">完了</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 画面2: 処分履歴画面 -->
+    <section id="view-history" class="view-panel" style="display:none;">
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:0.5rem;">
+          <h2 class="card-title" style="margin:0; border-bottom:none;">確定処分記録一覧</h2>
+          <button type="button" class="btn btn-secondary" onclick="exportHistoryCsv()">CSVエクスポート</button>
+        </div>
+        <div class="materials-table-wrapper">
+          <table class="materials-table history-table" id="history-table">
+            <thead>
+              <tr>
+                <th>伝票番号</th>
+                <th>発行日</th>
+                <th>拠点名</th>
+                <th>担当者</th>
+                <th>業者名</th>
+                <th>署名区分</th>
+                <th>状態</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="history-table-tbody">
+              <!-- 確定履歴 -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- 画面3: 集計画面 -->
+    <section id="view-summary" class="view-panel" style="display:none;">
+      <div class="card">
+        <h2 class="card-title">スクラップ処分実績 集計サマリー</h2>
+        <div class="summary-grid">
+          <div class="summary-stat-card">
+            <div class="summary-stat-value" id="summary-total-slips">0</div>
+            <div class="summary-stat-label">総伝票数</div>
+          </div>
+          <div class="summary-stat-card">
+            <div class="summary-stat-value" id="summary-total-weight">0.00 t</div>
+            <div class="summary-stat-label">総重量（推定）</div>
+          </div>
+          <div class="summary-stat-card">
+            <div class="summary-stat-value" id="summary-total-items">0</div>
+            <div class="summary-stat-label">資材数</div>
+          </div>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center; margin:1.25rem 0 0.6rem 0; flex-wrap:wrap; gap:0.5rem;">
+          <h3 id="scrap-list-heading" style="font-size:1.05rem; font-weight:700; color:var(--color-headline); margin:0;">スクラップ一覧</h3>
+          <button type="button" class="btn btn-secondary btn-sm" id="btn-export-scrap-csv" onclick="exportScrapListCsv()">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:0.3rem; vertical-align:middle;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            CSV出力
+          </button>
+        </div>
+
+        <div class="materials-table-wrapper">
+          <table class="materials-table scrap-list-table" id="scrap-list-table">
+            <thead>
+              <tr>
+                <th style="width:25%; cursor:pointer;" onclick="toggleScrapSort('code')" title="資材コードで並び替え">
+                  資材コード <span id="sort-icon-code" class="sort-indicator"></span>
+                </th>
+                <th style="width:45%; cursor:pointer;" onclick="toggleScrapSort('name')" title="資材名で並び替え">
+                  資材名 <span id="sort-icon-name" class="sort-indicator"></span>
+                </th>
+                <th style="width:15%; text-align:right; cursor:pointer;" onclick="toggleScrapSort('qty')" title="数量で並び替え">
+                  数量 <span id="sort-icon-qty" class="sort-indicator"></span>
+                </th>
+                <th style="width:15%; text-align:right; cursor:pointer;" onclick="toggleScrapSort('weight')" title="重量で並び替え">
+                  重量 <span id="sort-icon-weight" class="sort-indicator"></span>
+                </th>
+              </tr>
+            </thead>
+            <tbody id="summary-items-tbody">
+              <!-- 品目別集計行 -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 業者署名専用モーダル -->
+  <div id="signature-modal" class="modal-overlay">
+    <div class="modal-content signature-modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">業者署名</h3>
+      </div>
+      <div class="modal-body" style="margin-bottom:0.75rem;">
+        <p style="font-size:0.85rem; color:var(--color-text-muted); margin-bottom:0.5rem;">枠内に指またはタッチペンで署名してください</p>
+        <div class="signature-canvas-container">
+          <canvas id="vendor-signature-canvas" class="signature-canvas"></canvas>
+        </div>
+      </div>
+      <div class="modal-actions modal-actions-between">
+        <button type="button" class="btn btn-secondary" style="min-height:38px; padding:0.35rem 0.8rem; font-size:0.88rem;" onclick="clearSignatureModal()">クリア</button>
+        <div style="display:flex; gap:0.5rem;">
+          <button type="button" class="btn btn-secondary" style="min-height:38px; padding:0.35rem 0.8rem; font-size:0.88rem;" onclick="cancelSignatureModal()">キャンセル</button>
+          <button type="button" class="btn btn-primary" style="min-height:38px; padding:0.35rem 1.2rem; font-size:0.88rem; font-weight:700;" onclick="confirmSignatureModal()">OK</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 署名なし確認モーダル -->
+  <div id="no-signature-modal" class="modal-overlay">
+    <div class="modal-content">
+      <h3 class="modal-title">署名がありません</h3>
+      <div class="modal-body" id="no-signature-modal-body">
+署名なしで完了しますか？
+（必要に応じて印刷後に手書きで受領印または署名を行ってください）
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" onclick="closeNoSignatureModal()">戻る</button>
+        <button type="button" class="btn btn-primary" id="btn-modal-finalize" onclick="executeFinalize(true)">署名なしで完了</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 汎用メッセージモーダル (alert/confirm 代替) -->
+  <div id="generic-app-modal" class="modal-overlay">
+    <div class="modal-content">
+      <h3 class="modal-title" id="generic-modal-title">確認</h3>
+      <div class="modal-body" id="generic-modal-body"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" id="generic-modal-cancel" style="display:none;" onclick="closeGenericModal(false)">キャンセル</button>
+        <button type="button" class="btn btn-primary" id="generic-modal-ok" onclick="closeGenericModal(true)">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 完了モーダル (極小・内部情報非表示・印刷のみ) -->
+  <div id="completion-modal" class="modal-overlay">
+    <div class="modal-content completion-modal-content">
+      <div class="completion-icon">✓</div>
+      <h3 class="modal-title completion-title">完了しました</h3>
+      <div class="completion-actions">
+        <button type="button" class="btn btn-primary" id="btn-completion-print" onclick="handleCompletionPrint()">印刷</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 印刷用 A4 受渡伝票コンテナ (CSS Paged Media でのみ表示) -->
+  <div id="print-slip-container">
+    <div class="slip-header-grid">
+      <div>
+        <div class="slip-title">スクラップ引取受渡証明書</div>
+        <div style="font-size:9pt; margin-top:2px;">株式会社タカミヤ</div>
+      </div>
+      <div>
+        <table class="slip-meta-table">
+          <tr><td>伝票番号</td><td id="print-slip-id">SCRAP-0000</td></tr>
+          <tr><td>発行日時</td><td id="print-date">2026/09/19</td></tr>
+          <tr><td>発行拠点</td><td id="print-base-name">--</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <!-- 伝票情報テーブル (BaseNameのみ印刷、BaseCode非表示、重量非表示) -->
+    <table class="slip-info-table">
+      <tr>
+        <td class="info-label">拠点名</td>
+        <td class="info-value" id="print-info-base">--</td>
+        <td class="info-label">株式会社タカミヤ 担当者</td>
+        <td class="info-value" id="print-info-staff">--</td>
+      </tr>
+      <tr>
+        <td class="info-label">スクラップ引取業者</td>
+        <td class="info-value" colspan="3" id="print-info-vendor">--</td>
+      </tr>
+    </table>
+
+    <!-- 品目明細テーブル (重量カラム非表示) -->
+    <table class="slip-items-table">
+      <thead>
+        <tr>
+          <th style="width:8%;">No.</th>
+          <th style="width:22%;">区分</th>
+          <th style="width:45%;">品名 / 規格</th>
+          <th style="width:25%; text-align:right;">数量</th>
+        </tr>
+      </thead>
+      <tbody id="print-items-tbody">
+        <!-- 印刷用明細行 -->
+      </tbody>
+    </table>
+
+    <!-- 業者単独受領署名ブロック -->
+    <div class="slip-signature-container">
+      <div class="slip-signature-box">
+        <div style="font-weight:bold; font-size:8.5pt;">【業者様受領署名】</div>
+        <div style="text-align:center; height:65px; display:flex; align-items:center; justify-content:center;" id="print-signature-area">
+          <!-- DIGITAL なら画像、NONE なら手書き枠空白 -->
+          <img id="print-vendor-signature-img" class="signature-img-preview" alt="業者署名" style="display:none;">
+          <span id="print-no-signature-placeholder" style="color:#888; font-size:8pt; border-bottom:1px solid #ccc; width:80%; display:none; padding-bottom:4px;">(受領印または手書き署名)</span>
+        </div>
+        <div style="font-size:7pt; color:#666; text-align:right;">上記資材を正に受領いたしました</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- スクリプト読み込み (依存順) -->
+  <script src="src/js/config.js"></script>
+  <script src="src/js/fixtures.js"></script>
+  <script src="src/js/baseService.js"></script>
+  <script src="src/js/itemService.js"></script>
+  <script src="src/js/quantityEngine.js"></script>
+  <script src="src/js/weightEngine.js"></script>
+  <script src="src/js/signatureHelper.js"></script>
+  <script src="src/js/signature.js"></script>
+  <script src="src/js/gasClient.js"></script>
+  <script src="src/js/storage.js"></script>
+  <script src="src/js/validator.js"></script>
+  <script src="src/js/app.js"></script>
+</body>
+</html>
