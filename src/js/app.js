@@ -41,6 +41,8 @@ if (typeof document !== "undefined") {
     initFixedItemsList();
     initVendorSignaturePad();
     initSummaryDates();
+    setupHalfWidthNormalization(document.getElementById("other-name-input"));
+    setupHalfWidthNormalization(document.getElementById("other-qty-input"));
     updateWeightDisplay();
     updateSignatureDisplay();
     initCompletionState();
@@ -155,7 +157,7 @@ function initCompletionState() {
       sessionStorage.removeItem("scrap_draft_saved_success");
       showAppModal({
         title: "一時保存",
-        message: "下書きを中央DBに一時保存しました。\n処分履歴画面の「一時保存伝票」からいつでも再開できます。"
+        message: "下書きを一時保存しました。\n処分履歴画面の「一時保存伝票」からいつでも再開できます。"
       });
     }
   } catch (e) {
@@ -444,18 +446,39 @@ function removeCodeItem(index) {
   updateWeightDisplay();
 }
 
-function stepCodeItemQty(index, delta) {
-  const item = currentCodeItems[index];
-  if (!item || item.quantityType !== "NUMBER") return;
+/**
+ * 数量入力欄の増減ステップ (+/-) コントロール (V3.2)
+ * - 10 -> 11, 10 -> 9
+ * - 1 -> 1 (0以下にしない)
+ * - 10+5 -> 16, 10+5 -> 14 (QuantityEngineで評価後にステップ)
+ * - 空 -> 1
+ * - 一式 -> no-op
+ */
+function stepFormQuantity(delta) {
+  const qtyInput = document.getElementById("item-qty-input");
+  if (!qtyInput) return;
 
-  const cur = typeof item.quantityValue === "number" ? item.quantityValue : 1;
-  const next = Math.max(1, cur + delta);
+  const raw = qtyInput.value.trim();
+  if (raw === "一式" || raw === "1式") {
+    return; // 一式: 値を変更しない
+  }
 
-  item.quantityValue = next;
-  item.quantityInput = String(next);
+  if (!raw) {
+    qtyInput.value = "1";
+    return;
+  }
 
-  renderCodeItemsTable();
-  updateWeightDisplay();
+  const parsed = QuantityEngine.parseQuantity(raw);
+  if (parsed.valid) {
+    if (parsed.type === "SET") {
+      return;
+    }
+    const cur = typeof parsed.value === "number" ? parsed.value : 1;
+    const next = Math.max(1, cur + delta);
+    qtyInput.value = String(next);
+  } else {
+    qtyInput.value = "1";
+  }
 }
 
 function renderCodeItemsTable() {
@@ -470,18 +493,9 @@ function renderCodeItemsTable() {
       ? `${(item.quantityValue * uw).toFixed(1)}kg`
       : `<span class="badge-unregistered">-</span>`;
 
-    let qtyHtml = "";
-    if (item.quantityType === "NUMBER") {
-      qtyHtml = `
-        <div class="qty-step-wrapper">
-          <button type="button" class="btn-qty-step" onclick="stepCodeItemQty(${idx}, -1)" aria-label="1減らす">－</button>
-          <span class="qty-step-val">${item.quantityValue}</span>
-          <button type="button" class="btn-qty-step" onclick="stepCodeItemQty(${idx}, 1)" aria-label="1増やす">＋</button>
-        </div>
-      `;
-    } else {
-      qtyHtml = `<span class="badge-set">一式</span>`;
-    }
+    const qtyHtml = item.quantityType === "NUMBER"
+      ? `<span>${item.quantityValue}</span>`
+      : `<span class="badge-set">一式</span>`;
 
     const tr = document.createElement("tr");
     tr.innerHTML = `
@@ -562,30 +576,60 @@ function collectFixedItems() {
   return result;
 }
 
-// 8. その他自由品目セクション
+// 8. その他自由品目セクション (自由入力 & 全角英数字半角正規化)
+function toHalfWidthAlphanumeric(str) {
+  if (!str) return "";
+  return str.replace(/[Ａ-Ｚａ-ｚ０-９]/g, function(ch) {
+    return String.fromCharCode(ch.charCodeAt(0) - 0xFEE0);
+  });
+}
+
+function setupHalfWidthNormalization(inputEl) {
+  if (!inputEl) return;
+  let isComposing = false;
+  inputEl.addEventListener("compositionstart", () => { isComposing = true; });
+  inputEl.addEventListener("compositionend", () => {
+    isComposing = false;
+    const norm = toHalfWidthAlphanumeric(inputEl.value);
+    if (norm !== inputEl.value) {
+      inputEl.value = norm;
+    }
+  });
+  inputEl.addEventListener("input", () => {
+    if (isComposing) return;
+    const norm = toHalfWidthAlphanumeric(inputEl.value);
+    if (norm !== inputEl.value) {
+      const start = inputEl.selectionStart;
+      const end = inputEl.selectionEnd;
+      inputEl.value = norm;
+      if (start !== null && end !== null) {
+        inputEl.setSelectionRange(start, end);
+      }
+    }
+  });
+  inputEl.addEventListener("blur", () => {
+    inputEl.value = toHalfWidthAlphanumeric(inputEl.value);
+  });
+}
+
 function addOtherItemFromForm() {
   const nameInput = document.getElementById("other-name-input");
   const qtyInput = document.getElementById("other-qty-input");
 
-  const name = nameInput.value.trim();
-  const rawQty = qtyInput.value.trim();
+  const name = toHalfWidthAlphanumeric(nameInput.value.trim());
+  const rawQty = toHalfWidthAlphanumeric(qtyInput.value.trim());
 
   if (!name) {
     showAppModal({ title: "入力エラー", message: "品名を入力してください。" });
     return;
   }
 
-  const parsedQty = QuantityEngine.parseQuantity(rawQty);
-  if (!parsedQty.valid) {
-    showAppModal({ title: "数量エラー", message: parsedQty.error });
-    return;
-  }
-
+  // その他品目は QuantityEngine の制約を完全に解除 (FREE_TEXT)
   currentOtherItems.push({
     itemName: name,
-    quantityInput: parsedQty.input,
-    quantityValue: parsedQty.value,
-    quantityType: parsedQty.type
+    quantityInput: rawQty,
+    quantityValue: null,
+    quantityType: "FREE_TEXT"
   });
 
   nameInput.value = "";
@@ -1025,7 +1069,7 @@ function saveTemporaryDraft() {
       // 失敗時: 画面入力を保持し、リロードしない
       showAppModal({
         title: "一時保存エラー",
-        message: "中央DBへの一時保存に失敗しました。通信状態を確認の上、再度お試しください。"
+        message: "一時保存に失敗しました。通信状態を確認の上、再度お試しください。"
       });
     }
   }).catch(err => {
@@ -1033,7 +1077,7 @@ function saveTemporaryDraft() {
     TerminalStorage.saveLocalDraft(draftData);
     showAppModal({
       title: "一時保存エラー",
-      message: "通信エラーにより中央DBへの一時保存に失敗しました。\n端末にバックアップを保持しましたが、一時保存は完了していません。\n通信状態を確認の上、再度お試しください。"
+      message: "通信エラーにより一時保存に失敗しました。\n端末にバックアップを保持しましたが、一時保存は完了していません。\n通信状態を確認の上、再度お試しください。"
     });
   });
 }
@@ -1079,7 +1123,7 @@ function renderHistoryTable() {
   }
 
   const baseCode = resolvedBaseCode;
-  tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--color-text-muted); padding:1.5rem;">中央DBより履歴を取得中...</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--color-text-muted); padding:1.5rem;">履歴を取得中...</td></tr>`;
 
   // 確定伝票の取得
   gasClient.fetchHistory({ baseCode: baseCode, status: "FINAL" }).then(res => {
@@ -1142,14 +1186,15 @@ function renderHistoryRows(tbody, slips) {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td class="history-col-mobile">
-        <div class="history-row-top">
-          <span class="hist-slip-no" style="font-weight:bold; font-size:0.85rem; color:var(--color-headline); margin-right:0.4rem;">${s.slipNo || s.slipId}</span>
+        <div class="history-row-1 history-row-top">
           <span class="hist-date">${dateStr}</span>
-          <span class="hist-base">${s.baseName}</span>
-          <span class="hist-vendor">${s.vendorName}</span>
+          <span class="hist-slip-no">${s.slipNo || s.slipId}</span>
         </div>
-        <div class="history-row-bottom">
-          <span class="hist-staff">担当: ${s.staffName}</span>
+        <div class="history-row-2">
+          <span class="hist-base">${s.baseName}</span>
+          <span class="hist-staff">${s.staffName}</span>
+        </div>
+        <div class="history-row-3 history-row-bottom">
           <div class="hist-actions">
             ${sigBadge}
             <button type="button" class="btn btn-secondary btn-sm" onclick="printSlipFromHistory(${idx})">印刷</button>
@@ -1330,6 +1375,8 @@ function applySummaryPeriodFilter() {
 }
 
 function renderSummaryView() {
+  const tbody = document.getElementById("summary-items-tbody");
+
   if (!resolvedBaseCode) {
     updateSummaryUi({
       totalSlipsCount: 0,
@@ -1337,7 +1384,6 @@ function renderSummaryView() {
       totalItemsCount: 0,
       items: []
     });
-    const tbody = document.getElementById("summary-table-tbody");
     if (tbody) {
       tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--color-text-muted); padding:2rem;">
         <p style="font-weight:bold; margin-bottom:0.5rem;">社員設定が登録されていません</p>
@@ -1351,13 +1397,29 @@ function renderSummaryView() {
   const fromDate = document.getElementById("summary-from-date") ? document.getElementById("summary-from-date").value : "";
   const toDate = document.getElementById("summary-to-date") ? document.getElementById("summary-to-date").value : "";
 
+  // Loading 表示
+  if (tbody) {
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--color-text-muted); padding:1.5rem;">集計データを取得中...</td></tr>`;
+  }
+
   gasClient.fetchSummary({ baseCode, fromDate, toDate }).then(res => {
     if (res && res.success) {
       currentSummaryData = res;
       updateSummaryUi(res);
+    } else {
+      currentSummaryData = { totalSlipsCount: 0, totalWeightKg: 0, totalItemsCount: 0, items: [] };
+      updateSummaryUi(currentSummaryData);
+      if (tbody) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--color-danger); padding:1.5rem;">集計データを取得できませんでした</td></tr>`;
+      }
     }
   }).catch(err => {
     console.error("[app.js] fetchSummary error:", err);
+    currentSummaryData = { totalSlipsCount: 0, totalWeightKg: 0, totalItemsCount: 0, items: [] };
+    updateSummaryUi(currentSummaryData);
+    if (tbody) {
+      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--color-danger); padding:1.5rem;">集計データを取得できませんでした</td></tr>`;
+    }
   });
 }
 
@@ -1396,7 +1458,7 @@ function updateSummaryUi(data) {
   const sortedItems = sortScrapItems(items, scrapSortState.column, scrapSortState.order);
 
   if (sortedItems.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--color-text-muted); padding:1rem;">指定期間の確定集計対象品目はありません。</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--color-text-muted); padding:1rem;">指定期間に集計対象データはありません</td></tr>`;
     return;
   }
 
@@ -1641,7 +1703,8 @@ if (typeof module !== "undefined" && module.exports) {
     sortScrapItems,
     sanitizeCsvCell,
     generateScrapCsvContent,
-    stepCodeItemQty,
+    stepFormQuantity,
+    toHalfWidthAlphanumeric,
     resetInputFormAfterSubmission,
     verifyAndSaveEmployee,
     applySummaryPeriodFilter,

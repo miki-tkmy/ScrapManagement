@@ -71,7 +71,11 @@
           </div>
           <div class="form-group" style="flex:1;">
             <label class="form-label" for="item-qty-input">数量 (加算式・一式可)</label>
-            <input type="text" id="item-qty-input" class="form-input" placeholder="例: 10, 10+5, 一式">
+            <div class="qty-input-group">
+              <button type="button" class="btn-qty-input-step" id="btn-qty-minus" onclick="stepFormQuantity(-1)" aria-label="1減らす">－</button>
+              <input type="text" id="item-qty-input" class="form-input" placeholder="例: 10, 10+5, 一式">
+              <button type="button" class="btn-qty-input-step" id="btn-qty-plus" onclick="stepFormQuantity(1)" aria-label="1増やす">＋</button>
+            </div>
           </div>
         </div>
         <button type="button" class="btn btn-secondary" style="width:100%;" onclick="addCodeItemFromForm()">資材明細に追加</button>
@@ -84,7 +88,7 @@
                 <th class="col-name">資材名</th>
                 <th class="col-qty">数量</th>
                 <th class="col-weight">重量</th>
-                <th class="col-delete">操作</th>
+                <th class="col-delete"><span class="sr-only">削除</span></th>
               </tr>
             </thead>
             <tbody id="code-items-tbody">
@@ -121,7 +125,7 @@
 
       <!-- その他品目入力カード (自由入力) -->
       <div class="card">
-        <h2 class="card-title">4. その他品目入力 (自由入力)</h2>
+        <h2 class="card-title">4. その他（自由入力）</h2>
         <div class="form-grid" style="margin-bottom:0.75rem;">
           <div class="form-group" style="flex:2;">
             <label class="form-label" for="other-name-input">品名・備考</label>
@@ -132,7 +136,7 @@
             <input type="text" id="other-qty-input" class="form-input" placeholder="例: 1式, 3箱">
           </div>
         </div>
-        <button type="button" class="btn btn-secondary" style="width:100%;" onclick="addOtherItemFromForm()">その他品目に追加</button>
+        <button type="button" class="btn btn-secondary" style="width:100%;" onclick="addOtherItemFromForm()">その他に追加</button>
 
         <div class="materials-table-wrapper" style="margin-top:1rem;">
           <table class="materials-table responsive-table">
@@ -140,7 +144,7 @@
               <tr>
                 <th style="width:55%;">品名・備考</th>
                 <th style="width:30%;">数量</th>
-                <th style="width:15%; text-align:center;">操作</th>
+                <th style="width:15%; text-align:center;"><span class="sr-only">削除</span></th>
               </tr>
             </thead>
             <tbody id="other-items-tbody">
@@ -190,7 +194,7 @@
     <section id="view-history" class="view-panel" style="display:none;">
       <div class="card">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:0.5rem;">
-          <h2 class="card-title" style="margin:0; border-bottom:none;">確定処分記録一覧 (中央DB)</h2>
+          <h2 class="card-title" style="margin:0; border-bottom:none;">確定処分記録一覧</h2>
           <button type="button" class="btn btn-secondary" onclick="exportHistoryCsv()">CSVエクスポート</button>
         </div>
 
@@ -225,7 +229,7 @@
     <!-- 画面3: 集計画面 -->
     <section id="view-summary" class="view-panel" style="display:none;">
       <div class="card">
-        <h2 class="card-title">スクラップ処分実績 集計サマリー (中央DB)</h2>
+        <h2 class="card-title">スクラップ処分実績 集計サマリー</h2>
 
         <!-- 集計期間フィルター -->
         <div class="summary-period-filter-card">
@@ -402,7 +406,7 @@
   </div>
 
   <!-- 印刷用 A4 受渡伝票コンテナ (CSS Paged Media でのみ表示) -->
-  <div id="print-slip-container">
+  <div id="print-slip-container" style="display:none;">
     <div class="slip-header-grid">
       <div>
         <div class="slip-title">スクラップ引取受渡証明書</div>

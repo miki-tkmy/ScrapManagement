@@ -52,6 +52,11 @@
   --min-tap-target: 44px;
 }
 
+/* 印刷用受領証明書コンテナ: 通常画面では完全非表示 */
+#print-slip-container {
+  display: none !important;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -526,6 +531,8 @@ body {
     border-bottom: 1px solid var(--color-border) !important;
     background: var(--color-surface);
   }
+  .history-row-1,
+  .history-row-2,
   .history-row-top {
     display: flex;
     justify-content: space-between;
@@ -534,11 +541,27 @@ body {
     font-size: 0.85rem;
     margin-bottom: 0.35rem;
   }
+  .history-row-3,
+  .history-row-bottom {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.82rem;
+    margin-top: 0.25rem;
+  }
   .hist-date {
     font-size: 0.82rem;
     color: var(--color-headline);
     font-weight: 700;
     flex-shrink: 0;
+  }
+  .hist-slip-no {
+    font-size: 0.82rem;
+    color: var(--color-headline);
+    font-weight: 700;
+    text-align: right;
+    font-family: monospace, sans-serif;
   }
   .hist-base {
     font-size: 0.84rem;
@@ -546,24 +569,10 @@ body {
     font-weight: 600;
     flex-shrink: 0;
   }
-  .hist-vendor {
-    font-size: 0.84rem;
-    color: var(--color-subheadline);
-    text-align: right;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    flex: 1;
-  }
-  .history-row-bottom {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.82rem;
-  }
   .hist-staff {
+    font-size: 0.82rem;
     color: var(--color-text-muted);
+    text-align: right;
   }
   .hist-actions {
     display: flex;
@@ -890,7 +899,45 @@ body.modal-open {
   }
 }
 
-/* 数量増減 [+]/[-] コントロール */
+/* 数量入力欄 [+]/[-] コンパクトコントロール (V3.2) */
+.qty-input-group {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 0.35rem;
+}
+
+.qty-input-group .form-input {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+}
+
+.btn-qty-input-step {
+  width: 44px;
+  height: 44px;
+  min-width: 40px;
+  min-height: 44px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--color-stroke, #1F1235);
+  background: var(--color-surface, #ffffff);
+  color: var(--color-headline, #1F1235);
+  font-size: 1.25rem;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+  transition: background 0.15s ease;
+}
+
+.btn-qty-input-step:active {
+  background: var(--color-tertiary, #FBDD74);
+}
+
+/* 数量増減 [+]/[-] コントロール (後方互換用) */
 .qty-step-wrapper {
   display: inline-flex;
   align-items: center;
