@@ -500,10 +500,16 @@ class GasClient {
   // 10. 確定保存 (POST action=final)
   async finalizeSlip(finalPayload) {
     if (this.isMockMode) {
-      const scrapId = finalPayload.scrapId || finalPayload.slipId || `SCRAP-${Date.now()}`;
+      if (!this._mockSequences) this._mockSequences = {};
+      const baseCode = finalPayload.baseCode || "B01";
+      this._mockSequences[baseCode] = (this._mockSequences[baseCode] || 0) + 1;
+      const seqStr = String(this._mockSequences[baseCode]).padStart(4, "0");
+      const slipNo = `SCRAP-${baseCode}${seqStr}`;
+      const scrapId = finalPayload.scrapId || `REC-${Date.now()}`;
       const confirmed = Object.assign({}, finalPayload, {
         scrapId: scrapId,
-        slipId: scrapId,
+        slipId: slipNo,
+        slipNo: slipNo,
         status: "FINAL",
         finalizedAt: new Date().toISOString()
       });
@@ -513,7 +519,8 @@ class GasClient {
         mode: "MOCK",
         status: "FINAL_CONFIRMED",
         scrapId: scrapId,
-        slipId: scrapId,
+        slipId: slipNo,
+        slipNo: slipNo,
         finalizedAt: confirmed.finalizedAt
       };
     }

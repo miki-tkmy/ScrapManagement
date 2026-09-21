@@ -880,6 +880,12 @@ function executeFinalize(isWithoutSignature, signatureDataUrl = null) {
     }
 
     pendingFinalizeSlip = null;
+    const officialSlipNo = res.slipNo || res.slipId || slipRecord.slipId;
+    slipRecord.slipId = officialSlipNo;
+    slipRecord.slipNo = officialSlipNo;
+    if (res.scrapId) {
+      slipRecord.scrapId = res.scrapId;
+    }
     lastFinalizedSlipData = slipRecord;
     TerminalStorage.clearLocalDraft();
 
@@ -1137,6 +1143,7 @@ function renderHistoryRows(tbody, slips) {
     tr.innerHTML = `
       <td class="history-col-mobile">
         <div class="history-row-top">
+          <span class="hist-slip-no" style="font-weight:bold; font-size:0.85rem; color:var(--color-headline); margin-right:0.4rem;">${s.slipNo || s.slipId}</span>
           <span class="hist-date">${dateStr}</span>
           <span class="hist-base">${s.baseName}</span>
           <span class="hist-vendor">${s.vendorName}</span>
@@ -1149,7 +1156,7 @@ function renderHistoryRows(tbody, slips) {
           </div>
         </div>
       </td>
-      <td class="hist-desktop-col"><strong>${s.slipId}</strong></td>
+      <td class="hist-desktop-col"><strong>${s.slipNo || s.slipId}</strong></td>
       <td class="hist-desktop-col">${dateStr}</td>
       <td class="hist-desktop-col">${s.baseName}</td>
       <td class="hist-desktop-col">${s.staffName}</td>
@@ -1171,7 +1178,7 @@ function printSlipFromHistory(index) {
 
   // 詳細が空の場合は Central DB から個別取得
   if (!s.codeItems || s.codeItems.length === 0) {
-    gasClient.fetchSlip(s.slipId).then(res => {
+    gasClient.fetchSlip(s.slipNo || s.slipId).then(res => {
       if (res && res.success && res.slip) {
         printSlipFromRecord(res.slip);
       }
@@ -1187,7 +1194,7 @@ function printSlipFromRecord(s) {
 
   // 右上: 伝票番号のみ
   const slipIdEl = document.getElementById("print-slip-id");
-  if (slipIdEl) slipIdEl.textContent = s.slipId;
+  if (slipIdEl) slipIdEl.textContent = s.slipNo || s.slipId;
 
   // 2x2「田」情報グリッド
   const printDateEl = document.getElementById("print-info-date");
