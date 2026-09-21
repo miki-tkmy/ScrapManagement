@@ -123,6 +123,104 @@ function saveAppSettings(settings) {
   } catch (e) {}
 }
 
+// 5. 履歴・集計 高速化キャッシュ (sessionStorage, 5分TTL, SSOTではない)
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5分 (300,000ms)
+
+function getHistoryCache(baseCode) {
+  if (!baseCode) return null;
+  try {
+    const raw = sessionStorage.getItem(`scrap_cache_history_${baseCode}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const now = Date.now();
+    if (parsed.fetchedAt && (now - parsed.fetchedAt) < CACHE_TTL_MS) {
+      return parsed;
+    }
+    // 期限切れ
+    sessionStorage.removeItem(`scrap_cache_history_${baseCode}`);
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function saveHistoryCache(baseCode, cacheData) {
+  if (!baseCode) return;
+  try {
+    const payload = {
+      baseCode: baseCode,
+      finalSlips: cacheData.finalSlips || [],
+      draftSlips: cacheData.draftSlips || [],
+      fetchedAt: Date.now()
+    };
+    sessionStorage.setItem(`scrap_cache_history_${baseCode}`, JSON.stringify(payload));
+  } catch (e) {}
+}
+
+function invalidateHistoryCache(baseCode) {
+  try {
+    if (baseCode) {
+      sessionStorage.removeItem(`scrap_cache_history_${baseCode}`);
+    } else {
+      // 全履歴キャッシュ削除
+      for (let i = sessionStorage.length - 1; i >= 0; i--) {
+        const k = sessionStorage.key(i);
+        if (k && k.startsWith("scrap_cache_history_")) {
+          sessionStorage.removeItem(k);
+        }
+      }
+    }
+  } catch (e) {}
+}
+
+function getSummaryCache(baseCode, fromDate, toDate) {
+  if (!baseCode) return null;
+  const key = `scrap_cache_summary_${baseCode}_${fromDate || ""}_${toDate || ""}`;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const now = Date.now();
+    if (parsed.fetchedAt && (now - parsed.fetchedAt) < CACHE_TTL_MS) {
+      return parsed.data;
+    }
+    // 期限切れ
+    sessionStorage.removeItem(key);
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function saveSummaryCache(baseCode, fromDate, toDate, data) {
+  if (!baseCode) return;
+  const key = `scrap_cache_summary_${baseCode}_${fromDate || ""}_${toDate || ""}`;
+  try {
+    const payload = {
+      data: data,
+      fetchedAt: Date.now()
+    };
+    sessionStorage.setItem(key, JSON.stringify(payload));
+  } catch (e) {}
+}
+
+function invalidateSummaryCache(baseCode) {
+  try {
+    const prefix = baseCode ? `scrap_cache_summary_${baseCode}_` : "scrap_cache_summary_";
+    for (let i = sessionStorage.length - 1; i >= 0; i--) {
+      const k = sessionStorage.key(i);
+      if (k && k.startsWith(prefix)) {
+        sessionStorage.removeItem(k);
+      }
+    }
+  } catch (e) {}
+}
+
+function invalidateAllCaches() {
+  invalidateHistoryCache();
+  invalidateSummaryCache();
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     getUserSettings,
@@ -134,7 +232,15 @@ if (typeof module !== "undefined" && module.exports) {
     saveLocalDraft,
     clearLocalDraft,
     getAppSettings,
-    saveAppSettings
+    saveAppSettings,
+    CACHE_TTL_MS,
+    getHistoryCache,
+    saveHistoryCache,
+    invalidateHistoryCache,
+    getSummaryCache,
+    saveSummaryCache,
+    invalidateSummaryCache,
+    invalidateAllCaches
   };
 }
 if (typeof window !== "undefined") {
@@ -148,6 +254,14 @@ if (typeof window !== "undefined") {
     saveLocalDraft,
     clearLocalDraft,
     getAppSettings,
-    saveAppSettings
+    saveAppSettings,
+    CACHE_TTL_MS,
+    getHistoryCache,
+    saveHistoryCache,
+    invalidateHistoryCache,
+    getSummaryCache,
+    saveSummaryCache,
+    invalidateSummaryCache,
+    invalidateAllCaches
   };
 }

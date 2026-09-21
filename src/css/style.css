@@ -1047,3 +1047,109 @@ body.modal-open {
   color: var(--color-text-muted);
   font-weight: 700;
 }
+
+/* 全て削除ボタン & アクションバー改善 */
+.bottom-action-bar {
+  margin-top: 1.5rem;
+  margin-bottom: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.action-bar-danger-zone {
+  display: flex;
+  width: 100%;
+}
+
+.action-bar-danger-zone .btn-outline-danger {
+  width: 100%;
+}
+
+.btn-outline-danger {
+  background-color: transparent !important;
+  border: 1px solid var(--color-danger) !important;
+  color: var(--color-danger) !important;
+  font-weight: 600;
+  transition: all var(--transition-fast);
+}
+
+.btn-outline-danger:hover,
+.btn-outline-danger:active {
+  background-color: #fef2f2 !important;
+}
+
+/* 一時保存中 カード表示 (390px モバイル最適化) */
+.draft-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.draft-card-item {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.75rem;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.draft-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.35rem;
+  border-bottom: 1px dashed var(--color-border);
+  padding-bottom: 0.3rem;
+}
+
+.draft-card-no {
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: var(--color-primary);
+  background: var(--color-surface-subtle);
+  border-radius: 4px;
+  padding: 0.1rem 0.4rem;
+}
+
+.draft-card-date {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-headline);
+}
+
+.draft-card-body {
+  font-size: 0.82rem;
+  color: var(--color-text);
+  line-height: 1.4;
+  margin-bottom: 0.4rem;
+}
+
+.draft-card-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.15rem;
+}
+
+.draft-card-label {
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  min-width: 4.5rem;
+}
+
+.draft-card-value {
+  color: var(--color-headline);
+  font-weight: 500;
+  text-align: right;
+  word-break: break-all;
+}
+
+.draft-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+  border-top: 1px solid var(--color-border);
+  padding-top: 0.4rem;
+}

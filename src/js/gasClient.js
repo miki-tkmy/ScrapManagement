@@ -499,7 +499,84 @@ class GasClient {
     }
   }
 
-  // 10. 確定保存 (POST action=final)
+  // 10. 下書き削除 (POST action=delete-draft)
+  async deleteDraft(params = {}) {
+    const scrapId = params.scrapId || params.draftId || params.slipId;
+    const baseCode = params.baseCode;
+
+    if (!scrapId) {
+      return { success: false, error: "MISSING_DRAFT_ID", message: "Draft ID is required." };
+    }
+    if (!baseCode) {
+      return { success: false, error: "MISSING_BASE_CODE", message: "BaseCode is required." };
+    }
+
+    if (this.isMockMode) {
+      const cleanScrapId = String(scrapId).trim();
+      const cleanBaseCode = String(baseCode).trim();
+
+      // MOCK slips から検索
+      const idx = (this.mockSlips || []).findIndex(s => s.scrapId === cleanScrapId || s.slipId === cleanScrapId);
+      if (idx >= 0) {
+        const target = this.mockSlips[idx];
+        if (target.status === "FINAL") {
+          return { success: false, error: "CANNOT_DELETE_FINAL_SLIP", message: "FINAL slips cannot be deleted." };
+        }
+        if (target.baseCode !== cleanBaseCode) {
+          return { success: false, error: "BASE_SCOPE_VIOLATION", message: "Cannot delete draft belonging to another base." };
+        }
+        this.mockSlips[idx].status = "DRAFT_DELETED";
+      }
+
+      if (typeof window !== "undefined" && window.TerminalStorage) {
+        const local = window.TerminalStorage.getLocalDraft();
+        if (local && (local.scrapId === cleanScrapId || local.slipId === cleanScrapId)) {
+          window.TerminalStorage.clearLocalDraft();
+        }
+      }
+
+      return {
+        success: true,
+        mode: "MOCK",
+        status: "DRAFT_DELETED",
+        scrapId: cleanScrapId,
+        deletedAt: new Date().toISOString()
+      };
+    }
+
+    if (this.isUnconfiguredStaging) {
+      return {
+        success: false,
+        mode: "STAGING_UNCONFIGURED",
+        error: "STAGING_ENDPOINT_NOT_CONFIGURED"
+      };
+    }
+
+    try {
+      const resp = await fetch(this.endpointUrl, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: JSON.stringify({
+          action: "delete-draft",
+          payload: { scrapId: scrapId, baseCode: baseCode }
+        })
+      });
+      if (!resp.ok) throw new Error(`HTTP Error: ${resp.status}`);
+      const data = await resp.json();
+      data.mode = "GAS_STAGING";
+      return data;
+    } catch (e) {
+      console.error("[gasClient] deleteDraft failed:", e);
+      return {
+        success: false,
+        mode: "GAS_STAGING",
+        error: "STAGING_BACKEND_UNAVAILABLE",
+        message: e.message
+      };
+    }
+  }
+
+  // 11. 確定保存 (POST action=final)
   async finalizeSlip(finalPayload) {
     if (this.isMockMode) {
       if (!this._mockSequences) this._mockSequences = {};

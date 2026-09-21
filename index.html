@@ -18,10 +18,10 @@
 
   <!-- メインコンテンツ -->
   <main class="main-container no-print">
-    <!-- タブナビゲーション (通常利用者向け: 伝票入力 / 処分履歴 / 集計 / 設定) -->
+    <!-- タブナビゲーション (通常利用者向け: 伝票入力 / 履歴 / 集計 / 設定) -->
     <nav class="tab-nav">
       <button class="tab-btn active" id="tab-btn-create" onclick="switchTab('create')">伝票入力</button>
-      <button class="tab-btn" id="tab-btn-history" onclick="switchTab('history')">処分履歴</button>
+      <button class="tab-btn" id="tab-btn-history" onclick="switchTab('history')">履歴</button>
       <button class="tab-btn" id="tab-btn-summary" onclick="switchTab('summary')">集計</button>
       <button class="tab-btn" id="tab-btn-settings" onclick="switchTab('settings')">設定</button>
     </nav>
@@ -38,10 +38,10 @@
             <input type="text" id="base-code-input" class="form-input" placeholder="例: B01, B19" autocomplete="off" autocapitalize="characters" required>
             <div id="base-code-autocomplete" class="autocomplete-box"></div>
           </div>
-          <!-- BaseName 自動表示 (編集不可) -->
+          <!-- BaseName (社員番号照会から自動解決・必須・編集不可) -->
           <div class="form-group">
-            <label class="form-label" for="base-name-display">拠点名 (自動表示)</label>
-            <input type="text" id="base-name-display" class="form-input input-readonly" placeholder="拠点コードを入力すると自動表示" readonly>
+            <label class="form-label" for="base-name-display">拠点名 <span style="color:var(--color-danger)">*</span></label>
+            <input type="text" id="base-name-display" class="form-input input-readonly" placeholder="社員番号から自動取得" readonly required>
           </div>
           <!-- 担当者名 (株式会社タカミヤ側) -->
           <div class="form-group">
@@ -183,6 +183,9 @@
 
       <!-- 最下部アクションボタン (Document Flow内静的配置・固定禁止) -->
       <div class="bottom-action-bar">
+        <div class="action-bar-danger-zone">
+          <button type="button" class="btn btn-outline-danger" id="btn-full-clear" onclick="confirmFullClear()">全て削除</button>
+        </div>
         <div class="action-bar-inner">
           <button type="button" class="btn btn-secondary" id="btn-save-draft" onclick="saveTemporaryDraft()">一時保存</button>
           <button type="button" class="btn btn-primary" id="btn-finalize" onclick="handleFinalizeButtonClick()">完了</button>
@@ -190,17 +193,17 @@
       </div>
     </section>
 
-    <!-- 画面2: 処分履歴一覧画面 -->
+    <!-- 画面2: 履歴一覧画面 -->
     <section id="view-history" class="view-panel" style="display:none;">
       <div class="card">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:0.5rem;">
-          <h2 class="card-title" style="margin:0; border-bottom:none;">確定処分記録一覧</h2>
+          <h2 class="card-title" style="margin:0; border-bottom:none;">一覧</h2>
           <button type="button" class="btn btn-secondary" onclick="exportHistoryCsv()">CSVエクスポート</button>
         </div>
 
         <!-- 一時保存伝票再開セクション -->
         <div id="draft-slips-section" style="display:none; margin-bottom:1.5rem; padding:0.75rem; background:var(--color-surface-subtle); border:1px dashed var(--color-tertiary); border-radius:var(--radius-sm);">
-          <h3 style="font-size:0.95rem; font-weight:700; margin-bottom:0.5rem; color:var(--color-headline);">一時保存中の伝票</h3>
+          <h3 style="font-size:0.95rem; font-weight:700; margin-bottom:0.5rem; color:var(--color-headline);">一時保存中</h3>
           <div id="draft-slips-list"></div>
         </div>
 
@@ -229,8 +232,6 @@
     <!-- 画面3: 集計画面 -->
     <section id="view-summary" class="view-panel" style="display:none;">
       <div class="card">
-        <h2 class="card-title">スクラップ処分実績 集計サマリー</h2>
-
         <!-- 集計期間フィルター -->
         <div class="summary-period-filter-card">
           <div class="period-filter-group">
@@ -258,7 +259,7 @@
         </div>
 
         <div style="display:flex; justify-content:space-between; align-items:center; margin:1.25rem 0 0.6rem 0; flex-wrap:wrap; gap:0.5rem;">
-          <h3 id="scrap-list-heading" style="font-size:1.05rem; font-weight:700; color:var(--color-headline); margin:0;">スクラップ一覧</h3>
+          <h3 id="scrap-list-heading" style="font-size:1.05rem; font-weight:700; color:var(--color-headline); margin:0;">資材一覧</h3>
           <button type="button" class="btn btn-secondary btn-sm" id="btn-export-scrap-csv" onclick="exportScrapListCsv()">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:0.3rem; vertical-align:middle;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
             CSV出力

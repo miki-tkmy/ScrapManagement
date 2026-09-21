@@ -219,6 +219,15 @@ function verifyAndSaveEmployee() {
   gasClient.lookupEmployee(empNo).then(res => {
     if (res && res.success && res.employee) {
       const emp = res.employee;
+
+      // BaseCode または BaseName の不整合を検証 (Fail-Closed)
+      if (!emp.baseCode || !String(emp.baseCode).trim() || !emp.baseName || !String(emp.baseName).trim()) {
+        const mismatchMsg = "社員情報の拠点データに不整合があります (BaseCode または BaseName が未設定)。";
+        if (statusEl) statusEl.innerHTML = `<span style="color:var(--color-danger); font-weight:bold;">✕ ${mismatchMsg}</span>`;
+        showAppModal({ title: "社員情報不整合", message: mismatchMsg });
+        return;
+      }
+
       resolvedEmployeeNo = emp.empNo;
       resolvedEmployeeName = emp.employeeName;
       resolvedBaseCode = emp.baseCode;
@@ -241,6 +250,9 @@ function verifyAndSaveEmployee() {
         resolvedBaseName: resolvedBaseName,
         lastVerifiedAt: new Date().toISOString()
       });
+
+      // 拠点・社員変更に伴い全キャッシュを破棄
+      TerminalStorage.invalidateAllCaches();
 
       // 伝票入力へ即時反映
       applyEmployeeLockToForm();
@@ -799,6 +811,14 @@ function handleFinalizeButton() {
     return;
   }
 
+  if (!resolvedBaseName || !resolvedBaseName.trim()) {
+    showAppModal({
+      title: "拠点名未設定",
+      message: "拠点名を確認してください。設定タブで社員番号を登録してください。"
+    });
+    return;
+  }
+
   const baseCodeVal = resolvedBaseCode;
   const baseNameVal = resolvedBaseName;
   const staffNameVal = resolvedEmployeeName;
@@ -933,6 +953,10 @@ function executeFinalize(isWithoutSignature, signatureDataUrl = null) {
     lastFinalizedSlipData = slipRecord;
     TerminalStorage.clearLocalDraft();
 
+    // 履歴および集計キャッシュを無効化
+    TerminalStorage.invalidateHistoryCache(resolvedBaseCode);
+    TerminalStorage.invalidateSummaryCache(resolvedBaseCode);
+
     // 印刷用伝票レコードおよび完了モーダル表示フラグを sessionStorage へ保存
     try {
       sessionStorage.setItem("scrap_last_final_slip", JSON.stringify(slipRecord));
@@ -991,6 +1015,19 @@ function resetInputFormAfterSubmission() {
   const vendorInput = document.getElementById("vendor-name-input");
   if (vendorInput) vendorInput.value = "";
 
+  // 入力中フィールドのクリア
+  const itemCodeInput = document.getElementById("item-code-input");
+  const itemNameDisplay = document.getElementById("item-name-display");
+  const itemQtyInput = document.getElementById("item-qty-input");
+  const otherNameInput = document.getElementById("other-name-input");
+  const otherQtyInput = document.getElementById("other-qty-input");
+
+  if (itemCodeInput) itemCodeInput.value = "";
+  if (itemNameDisplay) itemNameDisplay.value = "";
+  if (itemQtyInput) itemQtyInput.value = "";
+  if (otherNameInput) otherNameInput.value = "";
+  if (otherQtyInput) otherQtyInput.value = "";
+
   // 定型品クリア
   const allFixed = (window.ACTIVE_FIXED_ITEMS && window.ACTIVE_FIXED_ITEMS.length > 0)
     ? window.ACTIVE_FIXED_ITEMS
@@ -1012,6 +1049,25 @@ function resetInputFormAfterSubmission() {
   }
 }
 
+// 11.5. 入力内容の全削除 (Full Clear)
+function confirmFullClear() {
+  showAppModal({
+    title: "入力内容を全て削除",
+    message: "入力中の内容を全て削除しますか？",
+    okText: "削除",
+    cancelText: "キャンセル",
+    onOk: () => executeFullClear()
+  });
+}
+
+function executeFullClear() {
+  resetInputFormAfterSubmission();
+  showAppModal({
+    title: "削除完了",
+    message: "入力内容を全て削除しました。"
+  });
+}
+
 function handleCompletionPrint() {
   let slipRecord = null;
   try {
@@ -1030,6 +1086,16 @@ function handleCompletionPrint() {
 }
 
 // 12. 下書き一時保存 (Central DB DRAFT & ページ再読込リセット)
+function getJstDateString() {
+  const now = new Date();
+  const utcMs = now.getTime() + (now.getTimezoneOffset() * 60 * 1000);
+  const jst = new Date(utcMs + (9 * 60 * 60 * 1000));
+  const y = jst.getFullYear();
+  const m = String(jst.getMonth() + 1).padStart(2, "0");
+  const d = String(jst.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 function saveTemporaryDraft() {
   if (!resolvedBaseCode) {
     showAppModal({
@@ -1039,12 +1105,22 @@ function saveTemporaryDraft() {
     return;
   }
 
+  if (!resolvedBaseName || !resolvedBaseName.trim()) {
+    showAppModal({
+      title: "拠点名未設定",
+      message: "拠点名を確認してください。設定タブで社員番号を登録してください。"
+    });
+    return;
+  }
+
   const baseCodeVal = resolvedBaseCode;
   const baseNameVal = resolvedBaseName;
   const staffNameVal = resolvedEmployeeName;
   const vendorNameVal = document.getElementById("vendor-name-input").value.trim();
+  const todayJst = getJstDateString();
 
   const draftData = {
+    date: todayJst, // JST 当日日付を処分日として明示保存 (savedAt の代用禁止)
     baseCode: baseCodeVal,
     baseName: baseNameVal,
     staffName: staffNameVal,
@@ -1058,6 +1134,8 @@ function saveTemporaryDraft() {
   gasClient.saveDraft(draftData).then(res => {
     if (res && res.success) {
       TerminalStorage.clearLocalDraft();
+      // 履歴キャッシュを無効化
+      TerminalStorage.invalidateHistoryCache(baseCodeVal);
       try {
         sessionStorage.setItem("scrap_draft_saved_success", "true");
       } catch (e) {
@@ -1103,42 +1181,103 @@ function resumeDraftSlip(slipId) {
       updateWeightDisplay();
 
       switchTab("create");
-      showAppModal({ title: "下書き再開", message: `伝票 (ID: ${s.slipId}) の入力を再開しました。` });
+      showAppModal({ title: "下書き再開", message: "下書きの入力を再開しました。" });
     }
   });
 }
 
-// 13. 中央履歴一覧 (Central DB Source of Truth & BaseCode 共有)
-function renderHistoryTable() {
-  const tbody = document.getElementById("history-table-tbody");
-  if (!tbody) return;
-
-  if (!resolvedBaseCode) {
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--color-text-muted); padding:2rem;">
-      <p style="font-weight:bold; margin-bottom:0.5rem;">社員設定が登録されていません</p>
-      <p style="font-size:0.85rem; margin:0;">「設定」タブで社員番号を登録すると、所属拠点の履歴が表示されます。</p>
-    </td></tr>`;
-    renderDraftSection([]);
-    return;
-  }
-
-  const baseCode = resolvedBaseCode;
-  tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--color-text-muted); padding:1.5rem;">履歴を取得中...</td></tr>`;
-
-  // 確定伝票の取得
-  gasClient.fetchHistory({ baseCode: baseCode, status: "FINAL" }).then(res => {
-    centralHistorySlips = (res && res.success && Array.isArray(res.slips)) ? res.slips : [];
-    renderHistoryRows(tbody, centralHistorySlips);
-  }).catch(err => {
-    console.error("[app.js] fetchHistory error:", err);
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--color-danger); padding:1.5rem;">履歴の取得に失敗しました。</td></tr>`;
+// 12.5. 一時保存下書きの削除 (論理削除 & モーダル確認)
+function confirmDeleteDraft(draftId) {
+  showAppModal({
+    title: "一時保存を削除",
+    message: "この一時保存を削除しますか？",
+    okText: "削除",
+    cancelText: "キャンセル",
+    onOk: () => executeDeleteDraft(draftId)
   });
+}
 
-  // 一時保存下書きの取得
-  gasClient.fetchHistory({ baseCode: baseCode, status: "DRAFT" }).then(res => {
-    centralDraftSlips = (res && res.success && Array.isArray(res.slips)) ? res.slips : [];
-    renderDraftSection(centralDraftSlips);
-  }).catch(() => {});
+function executeDeleteDraft(draftId) {
+  if (!draftId) return;
+  const baseCode = resolvedBaseCode;
+
+  gasClient.deleteDraft({ scrapId: draftId, baseCode: baseCode }).then(res => {
+    if (res && res.success) {
+      // 一覧から即時消える
+      centralDraftSlips = (centralDraftSlips || []).filter(d => (d.slipId !== draftId && d.scrapId !== draftId));
+      renderDraftSection(centralDraftSlips);
+      // 履歴キャッシュを無効化
+      TerminalStorage.invalidateHistoryCache(baseCode);
+      showAppModal({
+        title: "削除完了",
+        message: "一時保存伝票を削除しました。"
+      });
+    } else {
+      const msg = res ? (res.message || res.error) : "削除に失敗しました。";
+      showAppModal({
+        title: "削除エラー",
+        message: msg
+      });
+    }
+  }).catch(err => {
+    console.error("[app.js] deleteDraft error:", err);
+    showAppModal({
+      title: "通信エラー",
+      message: "通信エラーにより削除できませんでした。"
+    });
+  });
+}
+
+// 日付・日時フォーマットヘルパー (JST Asia/Tokyo)
+function formatJstDate(dateVal) {
+  if (!dateVal) return "--";
+  if (typeof dateVal === "string") {
+    const trimmed = dateVal.trim();
+    if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
+      return trimmed.slice(0, 10).replace(/-/g, "/");
+    }
+    if (/^\d{4}\/\d{2}\/\d{2}/.test(trimmed)) {
+      return trimmed.slice(0, 10);
+    }
+  }
+  const d = new Date(dateVal);
+  if (isNaN(d.getTime())) return String(dateVal).slice(0, 10);
+  const utcMs = d.getTime() + (d.getTimezoneOffset() * 60 * 1000);
+  const jst = new Date(utcMs + (9 * 60 * 60 * 1000));
+  const yyyy = jst.getFullYear();
+  const mm = String(jst.getMonth() + 1).padStart(2, "0");
+  const dd = String(jst.getDate()).padStart(2, "0");
+  return `${yyyy}/${mm}/${dd}`;
+}
+
+function formatJstDateTime(dateVal) {
+  if (!dateVal) return "--";
+  const d = new Date(dateVal);
+  if (isNaN(d.getTime())) return String(dateVal);
+  const utcMs = d.getTime() + (d.getTimezoneOffset() * 60 * 1000);
+  const jst = new Date(utcMs + (9 * 60 * 60 * 1000));
+  const yyyy = jst.getFullYear();
+  const mm = String(jst.getMonth() + 1).padStart(2, "0");
+  const dd = String(jst.getDate()).padStart(2, "0");
+  const hh = String(jst.getHours()).padStart(2, "0");
+  const min = String(jst.getMinutes()).padStart(2, "0");
+  return `${yyyy}/${mm}/${dd} ${hh}:${min}`;
+}
+
+function sortDrafts(drafts) {
+  if (!Array.isArray(drafts)) return [];
+  return [...drafts].sort((a, b) => {
+    // 第1キー: 処分日 DESC
+    const dateA = (a.date || "").slice(0, 10);
+    const dateB = (b.date || "").slice(0, 10);
+    if (dateA !== dateB) {
+      return dateB.localeCompare(dateA);
+    }
+    // 第2キー: 保存日時 DESC
+    const savedA = a.savedAt || a.updatedAt || a.createdAt || "";
+    const savedB = b.savedAt || b.updatedAt || b.createdAt || "";
+    return savedB.localeCompare(savedA);
+  });
 }
 
 function renderDraftSection(drafts) {
@@ -1154,18 +1293,102 @@ function renderDraftSection(drafts) {
 
   section.style.display = "block";
   list.innerHTML = "";
-  drafts.forEach(d => {
-    const item = document.createElement("div");
-    item.style.cssText = "display:flex; justify-content:space-between; align-items:center; padding:0.4rem 0; border-bottom:1px solid var(--color-border); font-size:0.85rem;";
-    item.innerHTML = `
-      <div>
-        <strong>${d.slipId}</strong>
-        <span style="color:var(--color-text-muted); margin-left:0.5rem;">${(d.date || "").slice(0, 10)}</span>
-        <span style="margin-left:0.5rem;">業者: ${d.vendorName || "未入力"}</span>
+  list.className = "draft-card-list";
+
+  const sorted = sortDrafts(drafts);
+
+  sorted.forEach((d, idx) => {
+    const displayNo = idx + 1;
+    const disposalDateStr = formatJstDate(d.date);
+    const savedAtStr = formatJstDateTime(d.savedAt || d.updatedAt || d.createdAt);
+    const staffNameStr = d.staffName || "未入力";
+    const draftId = d.slipId || d.scrapId;
+
+    const card = document.createElement("div");
+    card.className = "draft-card-item";
+    card.dataset.draftId = draftId; // DOM datasetで保持 (画面には非表示)
+
+    card.innerHTML = `
+      <div class="draft-card-header">
+        <span class="draft-card-no">${displayNo}</span>
+        <span class="draft-card-date">処分日　${disposalDateStr}</span>
       </div>
-      <button type="button" class="btn btn-secondary btn-sm" onclick="resumeDraftSlip('${d.slipId}')">再開</button>
+      <div class="draft-card-body">
+        <div class="draft-card-row">
+          <span class="draft-card-label">担当者</span>
+          <span class="draft-card-value">${staffNameStr}</span>
+        </div>
+        <div class="draft-card-row">
+          <span class="draft-card-label">保存日時</span>
+          <span class="draft-card-value">${savedAtStr}</span>
+        </div>
+      </div>
+      <div class="draft-card-actions">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="resumeDraftSlip('${draftId}')">再開</button>
+        <button type="button" class="btn btn-outline-danger btn-sm" onclick="confirmDeleteDraft('${draftId}')">削除</button>
+      </div>
     `;
-    list.appendChild(item);
+    list.appendChild(card);
+  });
+}
+
+// 13. 中央履歴一覧 (5分TTL キャッシュ & Central DB SSOT)
+function renderHistoryTable() {
+  const tbody = document.getElementById("history-table-tbody");
+  if (!tbody) return;
+
+  if (!resolvedBaseCode) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--color-text-muted); padding:2rem;">
+      <p style="font-weight:bold; margin-bottom:0.5rem;">社員設定が登録されていません</p>
+      <p style="font-size:0.85rem; margin:0;">「設定」タブで社員番号を登録すると、所属拠点の履歴が表示されます。</p>
+    </td></tr>`;
+    renderDraftSection([]);
+    return;
+  }
+
+  const baseCode = resolvedBaseCode;
+
+  // 1. キャッシュチェック (5分TTL)
+  const cached = TerminalStorage.getHistoryCache(baseCode);
+  if (cached) {
+    centralHistorySlips = cached.finalSlips || [];
+    centralDraftSlips = cached.draftSlips || [];
+    renderHistoryRows(tbody, centralHistorySlips);
+    renderDraftSection(centralDraftSlips);
+    return;
+  }
+
+  tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--color-text-muted); padding:1.5rem;">履歴を取得中...</td></tr>`;
+
+  // 確定伝票 & 一時保存下書きの並行取得
+  Promise.all([
+    gasClient.fetchHistory({ baseCode: baseCode, status: "FINAL" }),
+    gasClient.fetchHistory({ baseCode: baseCode, status: "DRAFT" })
+  ]).then(([finalRes, draftRes]) => {
+    centralHistorySlips = (finalRes && finalRes.success && Array.isArray(finalRes.slips)) ? finalRes.slips : [];
+    centralDraftSlips = (draftRes && draftRes.success && Array.isArray(draftRes.slips)) ? draftRes.slips : [];
+
+    // キャッシュ保存 (5分TTL)
+    TerminalStorage.saveHistoryCache(baseCode, {
+      finalSlips: centralHistorySlips,
+      draftSlips: centralDraftSlips
+    });
+
+    renderHistoryRows(tbody, centralHistorySlips);
+    renderDraftSection(centralDraftSlips);
+  }).catch(err => {
+    console.error("[app.js] fetchHistory error:", err);
+    // 直前キャッシュのフォールバックチェック
+    const fallback = TerminalStorage.getHistoryCache(baseCode);
+    if (fallback && fallback.finalSlips) {
+      centralHistorySlips = fallback.finalSlips;
+      centralDraftSlips = fallback.draftSlips;
+      renderHistoryRows(tbody, centralHistorySlips);
+      renderDraftSection(centralDraftSlips);
+      showAppModal({ title: "お知らせ", message: "最新情報を取得できませんでした。直前のキャッシュを表示しています。" });
+    } else {
+      tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--color-danger); padding:1.5rem;">履歴の取得に失敗しました。</td></tr>`;
+    }
   });
 }
 
@@ -1397,6 +1620,14 @@ function renderSummaryView() {
   const fromDate = document.getElementById("summary-from-date") ? document.getElementById("summary-from-date").value : "";
   const toDate = document.getElementById("summary-to-date") ? document.getElementById("summary-to-date").value : "";
 
+  // 1. キャッシュチェック (5分TTL)
+  const cached = TerminalStorage.getSummaryCache(baseCode, fromDate, toDate);
+  if (cached) {
+    currentSummaryData = cached;
+    updateSummaryUi(cached);
+    return;
+  }
+
   // Loading 表示
   if (tbody) {
     tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--color-text-muted); padding:1.5rem;">集計データを取得中...</td></tr>`;
@@ -1405,20 +1636,35 @@ function renderSummaryView() {
   gasClient.fetchSummary({ baseCode, fromDate, toDate }).then(res => {
     if (res && res.success) {
       currentSummaryData = res;
+      TerminalStorage.saveSummaryCache(baseCode, fromDate, toDate, res);
       updateSummaryUi(res);
+    } else {
+      const fallback = TerminalStorage.getSummaryCache(baseCode, fromDate, toDate);
+      if (fallback) {
+        currentSummaryData = fallback;
+        updateSummaryUi(fallback);
+        showAppModal({ title: "お知らせ", message: "最新情報を取得できませんでした。直前のキャッシュを表示しています。" });
+      } else {
+        currentSummaryData = { totalSlipsCount: 0, totalWeightKg: 0, totalItemsCount: 0, items: [] };
+        updateSummaryUi(currentSummaryData);
+        if (tbody) {
+          tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--color-danger); padding:1.5rem;">集計データを取得できませんでした</td></tr>`;
+        }
+      }
+    }
+  }).catch(err => {
+    console.error("[app.js] fetchSummary error:", err);
+    const fallback = TerminalStorage.getSummaryCache(baseCode, fromDate, toDate);
+    if (fallback) {
+      currentSummaryData = fallback;
+      updateSummaryUi(fallback);
+      showAppModal({ title: "お知らせ", message: "最新情報を取得できませんでした。直前のキャッシュを表示しています。" });
     } else {
       currentSummaryData = { totalSlipsCount: 0, totalWeightKg: 0, totalItemsCount: 0, items: [] };
       updateSummaryUi(currentSummaryData);
       if (tbody) {
         tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--color-danger); padding:1.5rem;">集計データを取得できませんでした</td></tr>`;
       }
-    }
-  }).catch(err => {
-    console.error("[app.js] fetchSummary error:", err);
-    currentSummaryData = { totalSlipsCount: 0, totalWeightKg: 0, totalItemsCount: 0, items: [] };
-    updateSummaryUi(currentSummaryData);
-    if (tbody) {
-      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--color-danger); padding:1.5rem;">集計データを取得できませんでした</td></tr>`;
     }
   });
 }
@@ -1555,7 +1801,7 @@ function generateScrapCsvContent(sortedItems) {
 
 function exportScrapListCsv() {
   if (!currentSummaryData || !Array.isArray(currentSummaryData.items) || currentSummaryData.items.length === 0) {
-    showAppModal({ title: "お知らせ", message: "出力可能なスクラップ一覧データがありません。" });
+    showAppModal({ title: "お知らせ", message: "出力可能な資材一覧データがありません。" });
     return;
   }
 
@@ -1564,7 +1810,7 @@ function exportScrapListCsv() {
 
   const fromDate = (document.getElementById("summary-from-date") ? document.getElementById("summary-from-date").value : "").replace(/-/g, "");
   const toDate = (document.getElementById("summary-to-date") ? document.getElementById("summary-to-date").value : "").replace(/-/g, "");
-  const filename = `ScrapManagement_スクラップ一覧_${resolvedBaseCode}_${fromDate}-${toDate}.csv`;
+  const filename = `ScrapManagement_資材一覧_${resolvedBaseCode}_${fromDate}-${toDate}.csv`;
 
   downloadCsvFile(csvContent, filename);
 }
@@ -1720,6 +1966,15 @@ if (typeof module !== "undefined" && module.exports) {
     switchTab,
     renderHistoryTable,
     renderSummaryView,
+    renderDraftSection,
+    confirmDeleteDraft,
+    executeDeleteDraft,
+    confirmFullClear,
+    executeFullClear,
+    formatJstDate,
+    formatJstDateTime,
+    sortDrafts,
+    getJstDateString,
     showEmployeeUnconfiguredBanner,
     hideEmployeeUnconfiguredBanner,
     getResolvedEmployeeInfo: () => ({
