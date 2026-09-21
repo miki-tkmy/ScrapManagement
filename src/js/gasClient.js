@@ -360,11 +360,13 @@ class GasClient {
         (s.codeItems || []).forEach(it => {
           if (it.quantityType === "NUMBER" && typeof it.quantityValue === "number") {
             totalItemsCount += it.quantityValue;
-            const code = it.itemCode || "UNKNOWN";
-            const name = it.itemName || "";
-            const key = `${code}_${name}`;
+            const code = (it.itemCode ? String(it.itemCode).trim() : "") || "UNKNOWN";
+            const detailName = it.itemName || "";
+            const masterItem = (typeof window !== "undefined" && window.ACTIVE_ITEMS) ? window.ACTIVE_ITEMS.find(m => m.itemCode === code) : null;
+            const resolvedName = masterItem ? masterItem.itemName : detailName;
+            const key = code;
             if (!itemMap[key]) {
-              itemMap[key] = { itemCode: code, itemName: name, totalQty: 0, totalWeightKg: 0, hasWeight: false };
+              itemMap[key] = { itemCode: code, itemName: resolvedName, totalQty: 0, totalWeightKg: 0, hasWeight: false };
             }
             itemMap[key].totalQty += it.quantityValue;
             const uw = parseFloat(it.unitWeightKg);
