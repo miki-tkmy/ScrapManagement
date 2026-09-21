@@ -57,15 +57,15 @@ function getPreviousInput() {
   try {
     const raw = localStorage.getItem(TERMINAL_STORAGE_KEYS.PREVIOUS_INPUT);
     return raw ? JSON.parse(raw) : {
-      baseCode: "B01",
-      baseName: "仙台Base",
+      baseCode: "",
+      baseName: "",
       staffName: "",
       vendorName: ""
     };
   } catch (e) {
     return {
-      baseCode: "B01",
-      baseName: "仙台Base",
+      baseCode: "",
+      baseName: "",
       staffName: "",
       vendorName: ""
     };

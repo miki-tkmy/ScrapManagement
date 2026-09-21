@@ -157,7 +157,7 @@ function initCompletionState() {
       sessionStorage.removeItem("scrap_draft_saved_success");
       showAppModal({
         title: "一時保存",
-        message: "下書きを一時保存しました。\n処分履歴画面の「一時保存伝票」からいつでも再開できます。"
+        message: "一時保存しました。\n履歴画面の「一時保存中」から再開できます。"
       });
     }
   } catch (e) {
@@ -916,6 +916,7 @@ function executeFinalize(isWithoutSignature, signatureDataUrl = null) {
       baseCode: baseCodeVal,
       baseName: baseNameVal,
       staffName: staffNameVal,
+      employeeNo: resolvedEmployeeNo,
       vendorName: vendorNameVal,
       codeItems: [...currentCodeItems],
       fixedItems: [...fixedItems],
@@ -1124,6 +1125,7 @@ function saveTemporaryDraft() {
     baseCode: baseCodeVal,
     baseName: baseNameVal,
     staffName: staffNameVal,
+    employeeNo: resolvedEmployeeNo,
     vendorName: vendorNameVal,
     codeItems: [...currentCodeItems],
     fixedItems: collectFixedItems(),
@@ -1201,7 +1203,11 @@ function executeDeleteDraft(draftId) {
   if (!draftId) return;
   const baseCode = resolvedBaseCode;
 
-  gasClient.deleteDraft({ scrapId: draftId, baseCode: baseCode }).then(res => {
+  gasClient.deleteDraft({
+    scrapId: draftId,
+    baseCode: baseCode,
+    employeeNo: resolvedEmployeeNo
+  }).then(res => {
     if (res && res.success) {
       // 一覧から即時消える
       centralDraftSlips = (centralDraftSlips || []).filter(d => (d.slipId !== draftId && d.scrapId !== draftId));
@@ -1210,7 +1216,7 @@ function executeDeleteDraft(draftId) {
       TerminalStorage.invalidateHistoryCache(baseCode);
       showAppModal({
         title: "削除完了",
-        message: "一時保存伝票を削除しました。"
+        message: "一時保存を削除しました。"
       });
     } else {
       const msg = res ? (res.message || res.error) : "削除に失敗しました。";

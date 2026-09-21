@@ -465,7 +465,8 @@ class GasClient {
         status: "DRAFT_SAVED",
         scrapId: scrapId,
         slipId: scrapId,
-        savedAt: new Date().toISOString()
+        savedAt: new Date().toISOString(),
+        createdBy: draftPayload.employeeNo || ""
       };
     }
 
@@ -503,6 +504,7 @@ class GasClient {
   async deleteDraft(params = {}) {
     const scrapId = params.scrapId || params.draftId || params.slipId;
     const baseCode = params.baseCode;
+    const employeeNo = params.employeeNo || "";
 
     if (!scrapId) {
       return { success: false, error: "MISSING_DRAFT_ID", message: "Draft ID is required." };
@@ -514,6 +516,7 @@ class GasClient {
     if (this.isMockMode) {
       const cleanScrapId = String(scrapId).trim();
       const cleanBaseCode = String(baseCode).trim();
+      const cleanEmployeeNo = String(employeeNo).trim();
 
       // MOCK slips から検索
       const idx = (this.mockSlips || []).findIndex(s => s.scrapId === cleanScrapId || s.slipId === cleanScrapId);
@@ -526,6 +529,7 @@ class GasClient {
           return { success: false, error: "BASE_SCOPE_VIOLATION", message: "Cannot delete draft belonging to another base." };
         }
         this.mockSlips[idx].status = "DRAFT_DELETED";
+        this.mockSlips[idx].deletedBy = cleanEmployeeNo;
       }
 
       if (typeof window !== "undefined" && window.TerminalStorage) {
@@ -540,7 +544,8 @@ class GasClient {
         mode: "MOCK",
         status: "DRAFT_DELETED",
         scrapId: cleanScrapId,
-        deletedAt: new Date().toISOString()
+        deletedAt: new Date().toISOString(),
+        deletedBy: cleanEmployeeNo
       };
     }
 
@@ -558,7 +563,7 @@ class GasClient {
         headers: { "Content-Type": "text/plain" },
         body: JSON.stringify({
           action: "delete-draft",
-          payload: { scrapId: scrapId, baseCode: baseCode }
+          payload: { scrapId: scrapId, baseCode: baseCode, employeeNo: employeeNo }
         })
       });
       if (!resp.ok) throw new Error(`HTTP Error: ${resp.status}`);
@@ -580,7 +585,7 @@ class GasClient {
   async finalizeSlip(finalPayload) {
     if (this.isMockMode) {
       if (!this._mockSequences) this._mockSequences = {};
-      const baseCode = finalPayload.baseCode || "B01";
+      const baseCode = finalPayload.baseCode || "";
       this._mockSequences[baseCode] = (this._mockSequences[baseCode] || 0) + 1;
       const seqStr = String(this._mockSequences[baseCode]).padStart(4, "0");
       const slipNo = `SCRAP-${baseCode}${seqStr}`;
