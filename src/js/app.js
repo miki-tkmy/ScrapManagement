@@ -29,8 +29,8 @@ let currentSummaryData = null;
 // 社員設定 (解決済み情報)
 let resolvedEmployeeNo = "";
 let resolvedEmployeeName = "";
-let resolvedBaseCode = "B01";
-let resolvedBaseName = "仙台Base";
+let resolvedBaseCode = "";
+let resolvedBaseName = "";
 
 if (typeof document !== "undefined") {
   document.addEventListener("DOMContentLoaded", () => {
@@ -43,6 +43,7 @@ if (typeof document !== "undefined") {
     initSummaryDates();
     updateWeightDisplay();
     updateSignatureDisplay();
+    initCompletionState();
   });
 }
 
@@ -105,9 +106,60 @@ function initUserSettings() {
 
     // 伝票入力画面のロック
     applyEmployeeLockToForm();
+    hideEmployeeUnconfiguredBanner();
   } else {
-    // 前回値フォールバック
-    initPreviousInputs();
+    // 社員未設定状態を維持 (B01などの勝手なフォールバック禁止)
+    resolvedEmployeeNo = "";
+    resolvedEmployeeName = "";
+    resolvedBaseCode = "";
+    resolvedBaseName = "";
+    showEmployeeUnconfiguredBanner();
+  }
+}
+
+function showEmployeeUnconfiguredBanner() {
+  let banner = document.getElementById("employee-unconfigured-banner");
+  if (!banner) {
+    const createView = document.getElementById("view-create");
+    if (createView) {
+      banner = document.createElement("div");
+      banner.id = "employee-unconfigured-banner";
+      banner.className = "alert-box";
+      banner.style.cssText = "margin-bottom:1rem; padding:0.75rem 1rem; background:#fee2e2; border:1px solid #f87171; border-radius:6px; color:#991b1b;";
+      banner.innerHTML = `
+        <p style="font-weight:bold; margin:0 0 0.25rem 0;">⚠ 社員番号が未設定です</p>
+        <p style="margin:0; font-size:0.85rem;">伝票の入力・保存を行うには、まず「設定」タブで社員番号を登録してください。</p>
+        <button type="button" class="btn btn-sm btn-primary" onclick="switchTab('settings')" style="margin-top:0.5rem;">設定タブを開く</button>
+      `;
+      createView.insertBefore(banner, createView.firstChild);
+    }
+  }
+}
+
+function hideEmployeeUnconfiguredBanner() {
+  const banner = document.getElementById("employee-unconfigured-banner");
+  if (banner && banner.parentNode) {
+    banner.parentNode.removeChild(banner);
+  }
+}
+
+function initCompletionState() {
+  try {
+    const completionPending = sessionStorage.getItem("scrap_completion_pending");
+    if (completionPending === "true") {
+      openCompletionModal();
+    }
+
+    const draftSavedSuccess = sessionStorage.getItem("scrap_draft_saved_success");
+    if (draftSavedSuccess === "true") {
+      sessionStorage.removeItem("scrap_draft_saved_success");
+      showAppModal({
+        title: "一時保存",
+        message: "下書きを中央DBに一時保存しました。\n処分履歴画面の「一時保存伝票」からいつでも再開できます。"
+      });
+    }
+  } catch (e) {
+    console.error("[app.js] initCompletionState error:", e);
   }
 }
 
@@ -125,7 +177,7 @@ function applyEmployeeLockToForm() {
     staffNameInput.classList.add("input-readonly");
   }
   if (baseCodeGroup) {
-    baseCodeGroup.style.display = "none"; // 社員解決時は拠点コード入力を非表示にして誤入力を防ぐ
+    baseCodeGroup.style.display = resolvedBaseCode ? "none" : "block";
   }
 }
 
@@ -190,6 +242,7 @@ function verifyAndSaveEmployee() {
 
       // 伝票入力へ即時反映
       applyEmployeeLockToForm();
+      hideEmployeeUnconfiguredBanner();
 
       showAppModal({
         title: "設定完了",
@@ -694,9 +747,17 @@ function closeGenericModal(result) {
 
 // 11. 伝票完了処理 (確定 & 完了画面 & フォーム初期化)
 function handleFinalizeButton() {
-  const baseCodeVal = resolvedBaseCode || document.getElementById("base-code-input").value.trim();
-  const baseNameVal = resolvedBaseName || document.getElementById("base-name-display").value.trim();
-  const staffNameVal = resolvedEmployeeName || document.getElementById("staff-name-input").value.trim();
+  if (!resolvedBaseCode) {
+    showAppModal({
+      title: "社員番号未設定",
+      message: "伝票を完了するには、まず「設定」タブで社員番号を登録してください。"
+    });
+    return;
+  }
+
+  const baseCodeVal = resolvedBaseCode;
+  const baseNameVal = resolvedBaseName;
+  const staffNameVal = resolvedEmployeeName;
   const vendorNameVal = document.getElementById("vendor-name-input").value.trim();
 
   const headerData = {
@@ -762,9 +823,17 @@ function generateSecureScrapId() {
 function executeFinalize(isWithoutSignature, signatureDataUrl = null) {
   closeNoSignatureModal();
 
-  const baseCodeVal = resolvedBaseCode || document.getElementById("base-code-input").value.trim();
-  const baseNameVal = resolvedBaseName || document.getElementById("base-name-display").value.trim();
-  const staffNameVal = resolvedEmployeeName || document.getElementById("staff-name-input").value.trim();
+  if (!resolvedBaseCode) {
+    showAppModal({
+      title: "社員番号未設定",
+      message: "伝票を完了するには、まず「設定」タブで社員番号を登録してください。"
+    });
+    return;
+  }
+
+  const baseCodeVal = resolvedBaseCode;
+  const baseNameVal = resolvedBaseName;
+  const staffNameVal = resolvedEmployeeName;
   const vendorNameVal = document.getElementById("vendor-name-input").value.trim();
 
   const fixedItems = collectFixedItems();
@@ -814,8 +883,16 @@ function executeFinalize(isWithoutSignature, signatureDataUrl = null) {
     lastFinalizedSlipData = slipRecord;
     TerminalStorage.clearLocalDraft();
 
-    // 完了モーダル表示
-    openCompletionModal();
+    // 印刷用伝票レコードおよび完了モーダル表示フラグを sessionStorage へ保存
+    try {
+      sessionStorage.setItem("scrap_last_final_slip", JSON.stringify(slipRecord));
+      sessionStorage.setItem("scrap_completion_pending", "true");
+    } catch (e) {
+      console.error("[app.js] Failed to save completion state to sessionStorage:", e);
+    }
+
+    // 実際のページ再読込を実行 (実ページ更新 + 入力内容クリア)
+    window.location.reload();
   }).catch(err => {
     setFinalizeButtonsDisabled(false);
     console.error("[app.js] Finalize network error:", err);
@@ -834,12 +911,24 @@ function openCompletionModal() {
   }
 }
 
-function closeCompletionModalAndReset() {
+function closeCompletionModal() {
   const modal = document.getElementById("completion-modal");
   if (modal) modal.style.display = "none";
   document.body.classList.remove("modal-open");
+  try {
+    sessionStorage.removeItem("scrap_completion_pending");
+    sessionStorage.removeItem("scrap_last_final_slip");
+  } catch (e) {}
+}
 
-  // 入力フォームの完全初期化 (設定された社員/Baseは保持)
+function handleCompletionOverlayClick(event) {
+  if (event.target && event.target.id === "completion-modal") {
+    closeCompletionModal();
+  }
+}
+
+function closeCompletionModalAndReset() {
+  closeCompletionModal();
   resetInputFormAfterSubmission();
 }
 
@@ -874,17 +963,35 @@ function resetInputFormAfterSubmission() {
 }
 
 function handleCompletionPrint() {
-  if (lastFinalizedSlipData) {
-    printSlipFromRecord(lastFinalizedSlipData);
+  let slipRecord = null;
+  try {
+    const raw = sessionStorage.getItem("scrap_last_final_slip");
+    if (raw) slipRecord = JSON.parse(raw);
+  } catch (e) {
+    console.error("[app.js] Failed to parse last finalized slip from sessionStorage:", e);
   }
-  closeCompletionModalAndReset();
+  if (!slipRecord && lastFinalizedSlipData) {
+    slipRecord = lastFinalizedSlipData;
+  }
+  if (slipRecord) {
+    printSlipFromRecord(slipRecord);
+  }
+  closeCompletionModal();
 }
 
-// 12. 下書き一時保存 (Central DB DRAFT & フォームリセット)
+// 12. 下書き一時保存 (Central DB DRAFT & ページ再読込リセット)
 function saveTemporaryDraft() {
-  const baseCodeVal = resolvedBaseCode || document.getElementById("base-code-input").value.trim();
-  const baseNameVal = resolvedBaseName || document.getElementById("base-name-display").value.trim();
-  const staffNameVal = resolvedEmployeeName || document.getElementById("staff-name-input").value.trim();
+  if (!resolvedBaseCode) {
+    showAppModal({
+      title: "社員番号未設定",
+      message: "伝票を一時保存するには、まず「設定」タブで社員番号を登録してください。"
+    });
+    return;
+  }
+
+  const baseCodeVal = resolvedBaseCode;
+  const baseNameVal = resolvedBaseName;
+  const staffNameVal = resolvedEmployeeName;
   const vendorNameVal = document.getElementById("vendor-name-input").value.trim();
 
   const draftData = {
@@ -901,26 +1008,27 @@ function saveTemporaryDraft() {
   gasClient.saveDraft(draftData).then(res => {
     if (res && res.success) {
       TerminalStorage.clearLocalDraft();
-      showAppModal({
-        title: "一時保存",
-        message: "下書きを中央DBに一時保存しました。\n処分履歴画面からいつでも再開できます。"
-      });
-      // 一時保存後フォームクリア
-      resetInputFormAfterSubmission();
+      try {
+        sessionStorage.setItem("scrap_draft_saved_success", "true");
+      } catch (e) {
+        console.error("[app.js] Failed to save draft success state to sessionStorage:", e);
+      }
+      // 成功時: 実際のページ再読込を実行 (実ページ更新 + 入力内容クリア)
+      window.location.reload();
     } else {
+      // 失敗時: 画面入力を保持し、リロードしない
       showAppModal({
         title: "一時保存エラー",
-        message: "中央DBへの一時保存に失敗しました。"
+        message: "中央DBへの一時保存に失敗しました。通信状態を確認の上、再度お試しください。"
       });
     }
-  }).catch(() => {
-    // オフライン時のローカルバックアップ
+  }).catch(err => {
+    // 通信エラー時: 端末非常用バックアップを保存するが、画面入力は保持し、リロードしない
     TerminalStorage.saveLocalDraft(draftData);
     showAppModal({
-      title: "一時保存",
-      message: "通信不可のため、端末ローカルに一時保存しました。"
+      title: "一時保存エラー",
+      message: "通信エラーにより中央DBへの一時保存に失敗しました。\n端末にバックアップを保持しましたが、一時保存は完了していません。\n通信状態を確認の上、再度お試しください。"
     });
-    resetInputFormAfterSubmission();
   });
 }
 
@@ -955,8 +1063,16 @@ function renderHistoryTable() {
   const tbody = document.getElementById("history-table-tbody");
   if (!tbody) return;
 
-  const baseCode = resolvedBaseCode || document.getElementById("base-code-input").value.trim() || "B01";
+  if (!resolvedBaseCode) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--color-text-muted); padding:2rem;">
+      <p style="font-weight:bold; margin-bottom:0.5rem;">社員設定が登録されていません</p>
+      <p style="font-size:0.85rem; margin:0;">「設定」タブで社員番号を登録すると、所属拠点の履歴が表示されます。</p>
+    </td></tr>`;
+    renderDraftSection([]);
+    return;
+  }
 
+  const baseCode = resolvedBaseCode;
   tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--color-text-muted); padding:1.5rem;">中央DBより履歴を取得中...</td></tr>`;
 
   // 確定伝票の取得
@@ -1207,7 +1323,24 @@ function applySummaryPeriodFilter() {
 }
 
 function renderSummaryView() {
-  const baseCode = resolvedBaseCode || document.getElementById("base-code-input").value.trim() || "B01";
+  if (!resolvedBaseCode) {
+    updateSummaryUi({
+      totalSlipsCount: 0,
+      totalWeightKg: 0,
+      totalItemsCount: 0,
+      items: []
+    });
+    const tbody = document.getElementById("summary-table-tbody");
+    if (tbody) {
+      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--color-text-muted); padding:2rem;">
+        <p style="font-weight:bold; margin-bottom:0.5rem;">社員設定が登録されていません</p>
+        <p style="font-size:0.85rem; margin:0;">「設定」タブで社員番号を登録すると、所属拠点の集計が表示されます。</p>
+      </td></tr>`;
+    }
+    return;
+  }
+
+  const baseCode = resolvedBaseCode;
   const fromDate = document.getElementById("summary-from-date") ? document.getElementById("summary-from-date").value : "";
   const toDate = document.getElementById("summary-to-date") ? document.getElementById("summary-to-date").value : "";
 
@@ -1450,8 +1583,15 @@ function saveFixedItemPreferences() {
   showAppModal({ title: "設定保存", message: "使用定型品設定を更新しました。" });
 }
 
-// 18. タブ切り替え (Lazy Loading 対応)
+// 18. タブ切り替え (Lazy Loading & 社員設定ガード対応)
 function switchTab(tabName) {
+  if (tabName !== "settings" && (!resolvedEmployeeNo || !resolvedBaseCode)) {
+    showAppModal({
+      title: "社員番号未設定",
+      message: "設定タブで社員番号を登録してください。"
+    });
+  }
+
   ["create", "history", "summary", "settings"].forEach(t => {
     const view = document.getElementById(`view-${t}`);
     if (view) view.style.display = t === tabName ? "block" : "none";
@@ -1497,6 +1637,26 @@ if (typeof module !== "undefined" && module.exports) {
     stepCodeItemQty,
     resetInputFormAfterSubmission,
     verifyAndSaveEmployee,
-    applySummaryPeriodFilter
+    applySummaryPeriodFilter,
+    openCompletionModal,
+    closeCompletionModal,
+    closeCompletionModalAndReset,
+    handleCompletionPrint,
+    handleCompletionOverlayClick,
+    saveTemporaryDraft,
+    executeFinalize,
+    initCompletionState,
+    initUserSettings,
+    switchTab,
+    renderHistoryTable,
+    renderSummaryView,
+    showEmployeeUnconfiguredBanner,
+    hideEmployeeUnconfiguredBanner,
+    getResolvedEmployeeInfo: () => ({
+      resolvedEmployeeNo,
+      resolvedEmployeeName,
+      resolvedBaseCode,
+      resolvedBaseName
+    })
   };
 }
