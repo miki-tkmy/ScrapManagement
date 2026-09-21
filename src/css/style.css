@@ -889,3 +889,114 @@ body.modal-open {
     display: none !important;
   }
 }
+
+/* 数量増減 [+]/[-] コントロール */
+.qty-step-wrapper {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.btn-qty-step {
+  width: 20px;
+  height: 20px;
+  min-height: 20px;
+  padding: 0;
+  border-radius: 3px;
+  border: 1px solid var(--color-stroke);
+  background: var(--color-surface);
+  color: var(--color-headline);
+  font-size: 0.75rem;
+  font-weight: 800;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  user-select: none;
+}
+
+.btn-qty-step:active {
+  background: var(--color-surface-subtle);
+}
+
+.btn-qty-step:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.qty-step-val {
+  min-width: 20px;
+  text-align: center;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.badge-set {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--color-text-muted);
+}
+
+/* 利用者設定 (Settings) スタイル */
+.settings-section {
+  margin-bottom: 1.25rem;
+}
+
+.settings-subheading {
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: var(--color-headline);
+  margin-bottom: 0.5rem;
+}
+
+.settings-checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--color-headline);
+  cursor: pointer;
+  user-select: none;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.input-readonly {
+  background-color: var(--color-surface-subtle) !important;
+  color: var(--color-text-muted) !important;
+  cursor: not-allowed;
+}
+
+/* 集計期間フィルター */
+.summary-period-filter-card {
+  background-color: var(--color-surface-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.period-filter-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.period-separator {
+  color: var(--color-text-muted);
+  font-weight: 700;
+}

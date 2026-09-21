@@ -1,4 +1,14 @@
 // アプリケーション統合コントローラー (app.js)
+// ========================================================================================
+// ScrapManagement Cross-Cutting Remediation
+// - 履歴・集計の Source of Truth: Central DB (Google Sheets / GAS)
+// - 社員番号設定 (CompanyBaseDB Projection) & 拠点/担当者ロック
+// - 資材明細の数量増減 [+]/[-] コントロール
+// - 完了・一時保存後の完全フォームリセット
+// - 印刷帳票: 2x2「田」レイアウト、右上伝票番号単一化、署名なし空白、メイリオ統一
+// - 集計期間指定 (開始日〜終了日) & 期間連動 CSV エクスポート
+// - カテゴリ別・定型品別マスタフィルタリング & Lazy Loading
+// ========================================================================================
 
 let currentCodeItems = [];
 let currentOtherItems = [];
@@ -9,35 +19,51 @@ let pendingFinalizeSlip = null;
 let confirmedSignatureData = null;
 let genericModalCallback = null;
 let lastFinalizedSlipIndex = 0;
+let lastFinalizedSlipData = null;
+
+// 中央履歴・集計キャッシュ
+let centralHistorySlips = [];
+let centralDraftSlips = [];
+let currentSummaryData = null;
+
+// 社員設定 (解決済み情報)
+let resolvedEmployeeNo = "";
+let resolvedEmployeeName = "";
+let resolvedBaseCode = "B01";
+let resolvedBaseName = "仙台Base";
 
 if (typeof document !== "undefined") {
   document.addEventListener("DOMContentLoaded", () => {
     initGasClient();
-    initPreviousInputs();
+    initUserSettings();
     initBaseCodeHandlers();
     initItemCodeHandlers();
     initFixedItemsList();
     initVendorSignaturePad();
-    loadTemporaryDraft();
-    renderHistoryTable();
+    initSummaryDates();
     updateWeightDisplay();
     updateSignatureDisplay();
   });
 }
 
-// 1. GAS クライアント初期化 & マスタ同期
+// 1. GAS クライアント初期化 & マスタ同期 (カテゴリ対応)
 function initGasClient() {
   gasClient = new GasClient();
   updateNetworkStatus();
 
-  // STAGING または MOCK でマスタデータ取得
-  gasClient.fetchMasters().then(res => {
+  const userSettings = TerminalStorage.getUserSettings();
+  const catOptions = { categories: userSettings.selectedMaterialCategories || [] };
+
+  gasClient.fetchMasters(catOptions).then(res => {
     if (res && res.success) {
       if (Array.isArray(res.bases) && res.bases.length > 0) window.ACTIVE_BASES = res.bases;
       if (Array.isArray(res.items) && res.items.length > 0) window.ACTIVE_ITEMS = res.items;
       if (Array.isArray(res.fixedItems) && res.fixedItems.length > 0) {
         window.ACTIVE_FIXED_ITEMS = res.fixedItems;
-        initFixedItemsList(); // 定型品テーブル再展開
+        initFixedItemsList();
+      }
+      if (Array.isArray(res.categories) && res.categories.length > 0) {
+        window.AVAILABLE_CATEGORIES = res.categories;
       }
     } else if (gasClient.getMode() === "GAS_STAGING") {
       console.warn("[app.js] STAGING Backend masters unavailable:", res ? res.error : "Unknown");
@@ -48,7 +74,6 @@ function initGasClient() {
 function updateNetworkStatus() {
   const mockBadge = document.getElementById("mock-warning-badge");
   if (!mockBadge) return;
-  // MOCK の場合のみ警告表示。GAS_STAGING 正常接続時は内部情報を一切表示しない
   if (gasClient && gasClient.getMode() === "MOCK") {
     mockBadge.style.display = "inline-flex";
   } else {
@@ -56,27 +81,138 @@ function updateNetworkStatus() {
   }
 }
 
-// 2. 端末前回値復元
-function initPreviousInputs() {
-  const prev = TerminalStorage.getPreviousInput();
-  if (prev.baseCode) {
-    document.getElementById("base-code-input").value = prev.baseCode;
-    const base = BaseService.findExactBase(prev.baseCode);
-    document.getElementById("base-name-display").value = base ? base.baseName : prev.baseName || "";
-  }
-  if (prev.staffName) {
-    document.getElementById("staff-name-input").value = prev.staffName;
-  }
-  if (prev.vendorName) {
-    document.getElementById("vendor-name-input").value = prev.vendorName;
+// 2. 利用者設定 (社員番号・担当者・拠点) の初期化 & フォームロック
+function initUserSettings() {
+  const settings = TerminalStorage.getUserSettings();
+  if (settings.employeeNo && settings.resolvedEmployeeName && settings.resolvedBaseCode) {
+    resolvedEmployeeNo = settings.employeeNo;
+    resolvedEmployeeName = settings.resolvedEmployeeName;
+    resolvedBaseCode = settings.resolvedBaseCode;
+    resolvedBaseName = settings.resolvedBaseName;
+
+    // 設定画面へ反映
+    const empInput = document.getElementById("setting-employee-no");
+    const nameInput = document.getElementById("setting-employee-name");
+    const baseInput = document.getElementById("setting-base-name");
+    const statusEl = document.getElementById("setting-employee-status");
+
+    if (empInput) empInput.value = resolvedEmployeeNo;
+    if (nameInput) nameInput.value = resolvedEmployeeName;
+    if (baseInput) baseInput.value = resolvedBaseName;
+    if (statusEl) {
+      statusEl.innerHTML = `<span style="color:var(--color-success); font-weight:bold;">✓ 社員登録済み (${resolvedEmployeeName} / ${resolvedBaseName})</span>`;
+    }
+
+    // 伝票入力画面のロック
+    applyEmployeeLockToForm();
+  } else {
+    // 前回値フォールバック
+    initPreviousInputs();
   }
 }
 
-// 3. BaseCode ハンドラ (iPhone日本語IME対応・半角大文字・リアルタイム候補・完全一致表示)
+function applyEmployeeLockToForm() {
+  const baseCodeInput = document.getElementById("base-code-input");
+  const baseNameDisplay = document.getElementById("base-name-display");
+  const staffNameInput = document.getElementById("staff-name-input");
+  const baseCodeGroup = document.getElementById("base-code-group");
+
+  if (baseCodeInput) baseCodeInput.value = resolvedBaseCode;
+  if (baseNameDisplay) baseNameDisplay.value = resolvedBaseName;
+  if (staffNameInput) {
+    staffNameInput.value = resolvedEmployeeName;
+    staffNameInput.readOnly = true;
+    staffNameInput.classList.add("input-readonly");
+  }
+  if (baseCodeGroup) {
+    baseCodeGroup.style.display = "none"; // 社員解決時は拠点コード入力を非表示にして誤入力を防ぐ
+  }
+}
+
+function initPreviousInputs() {
+  const prev = TerminalStorage.getPreviousInput();
+  if (prev.baseCode) {
+    const baseInput = document.getElementById("base-code-input");
+    if (baseInput) baseInput.value = prev.baseCode;
+    const base = BaseService.findExactBase(prev.baseCode);
+    const baseDisplay = document.getElementById("base-name-display");
+    if (baseDisplay) baseDisplay.value = base ? base.baseName : prev.baseName || "";
+  }
+  if (prev.staffName) {
+    const staffInput = document.getElementById("staff-name-input");
+    if (staffInput) staffInput.value = prev.staffName;
+  }
+  if (prev.vendorName) {
+    const vendorInput = document.getElementById("vendor-name-input");
+    if (vendorInput) vendorInput.value = prev.vendorName;
+  }
+}
+
+// 3. 社員番号の照会 & 保存 (設定タブ)
+function verifyAndSaveEmployee() {
+  const empInput = document.getElementById("setting-employee-no");
+  if (!empInput) return;
+  const empNo = empInput.value.trim();
+
+  if (!empNo) {
+    showAppModal({ title: "入力エラー", message: "社員番号を入力してください。" });
+    return;
+  }
+
+  const statusEl = document.getElementById("setting-employee-status");
+  if (statusEl) statusEl.innerHTML = `<span style="color:var(--color-primary);">照会中...</span>`;
+
+  gasClient.lookupEmployee(empNo).then(res => {
+    if (res && res.success && res.employee) {
+      const emp = res.employee;
+      resolvedEmployeeNo = emp.empNo;
+      resolvedEmployeeName = emp.employeeName;
+      resolvedBaseCode = emp.baseCode;
+      resolvedBaseName = emp.baseName;
+
+      const nameInput = document.getElementById("setting-employee-name");
+      const baseInput = document.getElementById("setting-base-name");
+      if (nameInput) nameInput.value = resolvedEmployeeName;
+      if (baseInput) baseInput.value = resolvedBaseName;
+
+      if (statusEl) {
+        statusEl.innerHTML = `<span style="color:var(--color-success); font-weight:bold;">✓ 確認完了: ${resolvedEmployeeName} (${resolvedBaseName}) として登録しました。</span>`;
+      }
+
+      // 端末設定保存
+      TerminalStorage.saveUserSettings({
+        employeeNo: resolvedEmployeeNo,
+        resolvedEmployeeName: resolvedEmployeeName,
+        resolvedBaseCode: resolvedBaseCode,
+        resolvedBaseName: resolvedBaseName,
+        lastVerifiedAt: new Date().toISOString()
+      });
+
+      // 伝票入力へ即時反映
+      applyEmployeeLockToForm();
+
+      showAppModal({
+        title: "設定完了",
+        message: `社員番号 ${resolvedEmployeeNo}\n担当者: ${resolvedEmployeeName}\n所属拠点: ${resolvedBaseName}\nとして設定しました。`
+      });
+    } else {
+      const msg = res ? (res.message || res.error) : "社員番号の照会に失敗しました。";
+      if (statusEl) statusEl.innerHTML = `<span style="color:var(--color-danger); font-weight:bold;">✕ ${msg}</span>`;
+      showAppModal({ title: "照会エラー", message: msg });
+    }
+  }).catch(err => {
+    console.error("[app.js] lookupEmployee error:", err);
+    if (statusEl) statusEl.innerHTML = `<span style="color:var(--color-danger);">通信エラーが発生しました。</span>`;
+    showAppModal({ title: "通信エラー", message: "社員情報の取得に失敗しました。通信状態を確認してください。" });
+  });
+}
+
+// 4. BaseCode ハンドラ (未設定時フォールバック用)
 function initBaseCodeHandlers() {
   const codeInput = document.getElementById("base-code-input");
   const nameDisplay = document.getElementById("base-name-display");
   const autoBox = document.getElementById("base-code-autocomplete");
+  if (!codeInput || !nameDisplay || !autoBox) return;
 
   let isComposing = false;
 
@@ -93,7 +229,6 @@ function initBaseCodeHandlers() {
       }
     }
 
-    // 完全一致チェック
     const exact = BaseService.findExactBase(normalized);
     if (exact) {
       nameDisplay.value = exact.baseName;
@@ -102,7 +237,6 @@ function initBaseCodeHandlers() {
       nameDisplay.value = "";
     }
 
-    // 候補表示
     const candidates = BaseService.searchBaseCodes(normalized);
     if (candidates.length > 0 && !exact) {
       autoBox.innerHTML = "";
@@ -124,19 +258,10 @@ function initBaseCodeHandlers() {
     }
   }
 
-  codeInput.addEventListener("compositionstart", () => {
-    isComposing = true;
-  });
-
-  codeInput.addEventListener("compositionend", () => {
-    isComposing = false;
-    handleBaseCodeChange(true);
-  });
-
+  codeInput.addEventListener("compositionstart", () => { isComposing = true; });
+  codeInput.addEventListener("compositionend", () => { isComposing = false; handleBaseCodeChange(true); });
   codeInput.addEventListener("input", e => {
-    if (e.isComposing || isComposing) {
-      return;
-    }
+    if (e.isComposing || isComposing) return;
     handleBaseCodeChange(true);
   });
 
@@ -147,11 +272,12 @@ function initBaseCodeHandlers() {
   });
 }
 
-// 4. ItemCode 検索ハンドラ (iPhone日本語IME文字重複根本防止)
+// 5. ItemCode 検索ハンドラ
 function initItemCodeHandlers() {
   const codeInput = document.getElementById("item-code-input");
   const nameDisplay = document.getElementById("item-name-display");
   const autoBox = document.getElementById("item-code-autocomplete");
+  if (!codeInput || !nameDisplay || !autoBox) return;
 
   let isComposing = false;
 
@@ -219,7 +345,7 @@ function initItemCodeHandlers() {
   });
 }
 
-// 5. 資材明細行の追加・削除
+// 6. 資材明細行の追加・削除 & 数量 [+]/[-] コントロール
 function addCodeItemFromForm() {
   const codeInput = document.getElementById("item-code-input");
   const nameDisplay = document.getElementById("item-name-display");
@@ -265,8 +391,23 @@ function removeCodeItem(index) {
   updateWeightDisplay();
 }
 
+function stepCodeItemQty(index, delta) {
+  const item = currentCodeItems[index];
+  if (!item || item.quantityType !== "NUMBER") return;
+
+  const cur = typeof item.quantityValue === "number" ? item.quantityValue : 1;
+  const next = Math.max(1, cur + delta);
+
+  item.quantityValue = next;
+  item.quantityInput = String(next);
+
+  renderCodeItemsTable();
+  updateWeightDisplay();
+}
+
 function renderCodeItemsTable() {
   const tbody = document.getElementById("code-items-tbody");
+  if (!tbody) return;
   tbody.innerHTML = "";
 
   currentCodeItems.forEach((item, idx) => {
@@ -276,11 +417,24 @@ function renderCodeItemsTable() {
       ? `${(item.quantityValue * uw).toFixed(1)}kg`
       : `<span class="badge-unregistered">-</span>`;
 
+    let qtyHtml = "";
+    if (item.quantityType === "NUMBER") {
+      qtyHtml = `
+        <div class="qty-step-wrapper">
+          <button type="button" class="btn-qty-step" onclick="stepCodeItemQty(${idx}, -1)" aria-label="1減らす">－</button>
+          <span class="qty-step-val">${item.quantityValue}</span>
+          <button type="button" class="btn-qty-step" onclick="stepCodeItemQty(${idx}, 1)" aria-label="1増やす">＋</button>
+        </div>
+      `;
+    } else {
+      qtyHtml = `<span class="badge-set">一式</span>`;
+    }
+
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td class="col-code"><strong>${item.itemCode}</strong></td>
       <td class="col-name">${item.itemName}</td>
-      <td class="col-qty"><strong>${item.quantityInput}</strong></td>
+      <td class="col-qty">${qtyHtml}</td>
       <td class="col-weight text-right">${weightDisplayHtml}</td>
       <td class="col-delete text-center">
         <button type="button" class="btn-delete-icon" aria-label="資材を削除" onclick="removeCodeItem(${idx})">
@@ -292,24 +446,32 @@ function renderCodeItemsTable() {
   });
 }
 
-// 6. スマホ専用 推定重量表示の更新 (kg表示を主値としton括弧表示を削除)
 function updateWeightDisplay() {
   const weightSummary = WeightEngine.calculateEstimatedWeight(currentCodeItems);
-  document.getElementById("weight-display-text").textContent =
-    `推定積載重量: ${weightSummary.formattedKg}`;
-  document.getElementById("weight-meta-counts").textContent =
-    `重量計算対象: ${weightSummary.registeredCount}品目 / 重量未登録: ${weightSummary.unregisteredCount}品目`;
+  const textEl = document.getElementById("weight-display-text");
+  const metaEl = document.getElementById("weight-meta-counts");
+  if (textEl) textEl.textContent = `推定積載重量: ${weightSummary.formattedKg}`;
+  if (metaEl) metaEl.textContent = `重量計算対象: ${weightSummary.registeredCount}品目 / 重量未登録: ${weightSummary.unregisteredCount}品目`;
 }
 
-// 7. 定型品セクション (説明・状態列を排除)
+// 7. 定型品セクション (選択定型品フィルタ対応)
 function initFixedItemsList() {
   const tbody = document.getElementById("fixed-items-tbody");
+  if (!tbody) return;
   tbody.innerHTML = "";
-  const fixedList = (window.ACTIVE_FIXED_ITEMS && window.ACTIVE_FIXED_ITEMS.length > 0)
+
+  const allFixed = (window.ACTIVE_FIXED_ITEMS && window.ACTIVE_FIXED_ITEMS.length > 0)
     ? window.ACTIVE_FIXED_ITEMS
     : (window.TEST_FIXTURE_FIXED_ITEMS || []);
 
-  fixedList.forEach(fi => {
+  const userSettings = TerminalStorage.getUserSettings();
+  const selectedCodes = userSettings.selectedFixedItemCodes || [];
+
+  const visibleList = (selectedCodes.length > 0)
+    ? allFixed.filter(fi => selectedCodes.includes(fi.fixedItemId))
+    : allFixed;
+
+  visibleList.forEach(fi => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td><strong>${fi.itemName}</strong></td>
@@ -323,12 +485,12 @@ function initFixedItemsList() {
 }
 
 function collectFixedItems() {
-  const fixedList = (window.ACTIVE_FIXED_ITEMS && window.ACTIVE_FIXED_ITEMS.length > 0)
+  const allFixed = (window.ACTIVE_FIXED_ITEMS && window.ACTIVE_FIXED_ITEMS.length > 0)
     ? window.ACTIVE_FIXED_ITEMS
     : (window.TEST_FIXTURE_FIXED_ITEMS || []);
   const result = [];
 
-  fixedList.forEach(fi => {
+  allFixed.forEach(fi => {
     const input = document.getElementById(`fixed-qty-${fi.fixedItemId}`);
     if (input && input.value.trim()) {
       const parsed = QuantityEngine.parseQuantity(input.value.trim());
@@ -385,6 +547,7 @@ function removeOtherItem(index) {
 
 function renderOtherItemsTable() {
   const tbody = document.getElementById("other-items-tbody");
+  if (!tbody) return;
   tbody.innerHTML = "";
 
   currentOtherItems.forEach((it, idx) => {
@@ -487,7 +650,7 @@ function updateSignatureDisplay() {
   }
 }
 
-// 10. 汎用アプリ内モーダル (browser alert / confirm 代替)
+// 10. 汎用アプリ内モーダル
 function showAppModal({ title = "確認", message = "", okText = "閉じる", cancelText = null, onOk = null, onCancel = null }) {
   const modal = document.getElementById("generic-app-modal");
   const titleEl = document.getElementById("generic-modal-title");
@@ -529,13 +692,18 @@ function closeGenericModal(result) {
   }
 }
 
-// 11. 伝票完了処理 (確定と印刷を完全分離 & 完了画面の極小化)
+// 11. 伝票完了処理 (確定 & 完了画面 & フォーム初期化)
 function handleFinalizeButton() {
+  const baseCodeVal = resolvedBaseCode || document.getElementById("base-code-input").value.trim();
+  const baseNameVal = resolvedBaseName || document.getElementById("base-name-display").value.trim();
+  const staffNameVal = resolvedEmployeeName || document.getElementById("staff-name-input").value.trim();
+  const vendorNameVal = document.getElementById("vendor-name-input").value.trim();
+
   const headerData = {
-    baseCode: document.getElementById("base-code-input").value.trim(),
-    baseName: document.getElementById("base-name-display").value.trim(),
-    staffName: document.getElementById("staff-name-input").value.trim(),
-    vendorName: document.getElementById("vendor-name-input").value.trim()
+    baseCode: baseCodeVal,
+    baseName: baseNameVal,
+    staffName: staffNameVal,
+    vendorName: vendorNameVal
   };
 
   const headerVal = Validator.validateSlipHeader(headerData);
@@ -551,22 +719,24 @@ function handleFinalizeButton() {
     return;
   }
 
-  // 業者署名の確認
   const sigVal = SignatureHelper.validateVendorSignature(confirmedSignatureData);
-
   if (!sigVal.hasSignature) {
-    // 署名なし確認モーダルを開く
-    document.getElementById("no-signature-modal").style.display = "flex";
-    document.body.classList.add("modal-open");
+    const noSigModal = document.getElementById("no-signature-modal");
+    if (noSigModal) {
+      noSigModal.style.display = "flex";
+      document.body.classList.add("modal-open");
+    }
     return;
   }
 
-  // 署名あり確定
   executeFinalize(false, sigVal.dataUrl);
 }
 
+const handleFinalizeButtonClick = handleFinalizeButton;
+
 function closeNoSignatureModal() {
-  document.getElementById("no-signature-modal").style.display = "none";
+  const noSigModal = document.getElementById("no-signature-modal");
+  if (noSigModal) noSigModal.style.display = "none";
   document.body.classList.remove("modal-open");
 }
 
@@ -592,15 +762,10 @@ function generateSecureScrapId() {
 function executeFinalize(isWithoutSignature, signatureDataUrl = null) {
   closeNoSignatureModal();
 
-  const headerData = {
-    baseCode: document.getElementById("base-code-input").value.trim(),
-    baseName: document.getElementById("base-name-display").value.trim(),
-    staffName: document.getElementById("staff-name-input").value.trim(),
-    vendorName: document.getElementById("vendor-name-input").value.trim()
-  };
-
-  // 端末前回値保存
-  TerminalStorage.savePreviousInput(headerData);
+  const baseCodeVal = resolvedBaseCode || document.getElementById("base-code-input").value.trim();
+  const baseNameVal = resolvedBaseName || document.getElementById("base-name-display").value.trim();
+  const staffNameVal = resolvedEmployeeName || document.getElementById("staff-name-input").value.trim();
+  const vendorNameVal = document.getElementById("vendor-name-input").value.trim();
 
   const fixedItems = collectFixedItems();
   const weightSummary = WeightEngine.calculateEstimatedWeight(currentCodeItems);
@@ -615,10 +780,10 @@ function executeFinalize(isWithoutSignature, signatureDataUrl = null) {
       createdAt: now,
       date: now.slice(0, 10),
       status: "FINAL",
-      baseCode: headerData.baseCode,
-      baseName: headerData.baseName,
-      staffName: headerData.staffName,
-      vendorName: headerData.vendorName,
+      baseCode: baseCodeVal,
+      baseName: baseNameVal,
+      staffName: staffNameVal,
+      vendorName: vendorNameVal,
       codeItems: [...currentCodeItems],
       fixedItems: [...fixedItems],
       otherItems: [...currentOtherItems],
@@ -645,26 +810,11 @@ function executeFinalize(isWithoutSignature, signatureDataUrl = null) {
       return;
     }
 
-    // 成功時は保留中伝票をクリア
     pendingFinalizeSlip = null;
-
-    // 端末履歴キャッシュ更新
-    saveSlipRecordToLocalCache(slipRecord);
+    lastFinalizedSlipData = slipRecord;
     TerminalStorage.clearLocalDraft();
 
-    // フォームリセット
-    currentCodeItems = [];
-    currentOtherItems = [];
-    confirmedSignatureData = null;
-    renderCodeItemsTable();
-    renderOtherItemsTable();
-    updateSignatureDisplay();
-    if (vendorPad) vendorPad.clear();
-    updateWeightDisplay();
-    renderHistoryTable();
-
-    // 完了モーダル表示 (極小・内部情報非表示)
-    lastFinalizedSlipIndex = 0;
+    // 完了モーダル表示
     openCompletionModal();
   }).catch(err => {
     setFinalizeButtonsDisabled(false);
@@ -684,86 +834,185 @@ function openCompletionModal() {
   }
 }
 
-function closeCompletionModal() {
+function closeCompletionModalAndReset() {
   const modal = document.getElementById("completion-modal");
   if (modal) modal.style.display = "none";
   document.body.classList.remove("modal-open");
+
+  // 入力フォームの完全初期化 (設定された社員/Baseは保持)
+  resetInputFormAfterSubmission();
+}
+
+function resetInputFormAfterSubmission() {
+  currentCodeItems = [];
+  currentOtherItems = [];
+  confirmedSignatureData = null;
+  pendingFinalizeSlip = null;
+
+  const vendorInput = document.getElementById("vendor-name-input");
+  if (vendorInput) vendorInput.value = "";
+
+  // 定型品クリア
+  const allFixed = (window.ACTIVE_FIXED_ITEMS && window.ACTIVE_FIXED_ITEMS.length > 0)
+    ? window.ACTIVE_FIXED_ITEMS
+    : (window.TEST_FIXTURE_FIXED_ITEMS || []);
+  allFixed.forEach(fi => {
+    const input = document.getElementById(`fixed-qty-${fi.fixedItemId}`);
+    if (input) input.value = "";
+  });
+
+  renderCodeItemsTable();
+  renderOtherItemsTable();
+  updateSignatureDisplay();
+  if (vendorPad) vendorPad.clear();
+  updateWeightDisplay();
+
+  // 社員設定を再適用 (担当者/Baseの初期設定を維持)
+  if (resolvedEmployeeNo) {
+    applyEmployeeLockToForm();
+  }
 }
 
 function handleCompletionPrint() {
-  closeCompletionModal();
-  printSlipFromHistory(lastFinalizedSlipIndex);
+  if (lastFinalizedSlipData) {
+    printSlipFromRecord(lastFinalizedSlipData);
+  }
+  closeCompletionModalAndReset();
 }
 
-// 12. 下書き一時保存 & 復元
+// 12. 下書き一時保存 (Central DB DRAFT & フォームリセット)
 function saveTemporaryDraft() {
+  const baseCodeVal = resolvedBaseCode || document.getElementById("base-code-input").value.trim();
+  const baseNameVal = resolvedBaseName || document.getElementById("base-name-display").value.trim();
+  const staffNameVal = resolvedEmployeeName || document.getElementById("staff-name-input").value.trim();
+  const vendorNameVal = document.getElementById("vendor-name-input").value.trim();
+
   const draftData = {
-    baseCode: document.getElementById("base-code-input").value.trim(),
-    baseName: document.getElementById("base-name-display").value.trim(),
-    staffName: document.getElementById("staff-name-input").value.trim(),
-    vendorName: document.getElementById("vendor-name-input").value.trim(),
-    codeItems: currentCodeItems,
-    otherItems: currentOtherItems,
+    baseCode: baseCodeVal,
+    baseName: baseNameVal,
+    staffName: staffNameVal,
+    vendorName: vendorNameVal,
+    codeItems: [...currentCodeItems],
+    fixedItems: collectFixedItems(),
+    otherItems: [...currentOtherItems],
     savedAt: new Date().toISOString()
   };
 
-  TerminalStorage.saveLocalDraft(draftData);
-  TerminalStorage.savePreviousInput(draftData);
-
   gasClient.saveDraft(draftData).then(res => {
-    showAppModal({ title: "一時保存", message: "下書きを一時保存しました。" });
+    if (res && res.success) {
+      TerminalStorage.clearLocalDraft();
+      showAppModal({
+        title: "一時保存",
+        message: "下書きを中央DBに一時保存しました。\n処分履歴画面からいつでも再開できます。"
+      });
+      // 一時保存後フォームクリア
+      resetInputFormAfterSubmission();
+    } else {
+      showAppModal({
+        title: "一時保存エラー",
+        message: "中央DBへの一時保存に失敗しました。"
+      });
+    }
   }).catch(() => {
-    showAppModal({ title: "一時保存", message: "下書きを端末に一時保存しました。" });
+    // オフライン時のローカルバックアップ
+    TerminalStorage.saveLocalDraft(draftData);
+    showAppModal({
+      title: "一時保存",
+      message: "通信不可のため、端末ローカルに一時保存しました。"
+    });
+    resetInputFormAfterSubmission();
   });
 }
 
-function loadTemporaryDraft() {
-  const draft = TerminalStorage.getLocalDraft();
-  if (!draft) return;
+function resumeDraftSlip(slipId) {
+  gasClient.fetchSlip(slipId).then(res => {
+    if (res && res.success && res.slip) {
+      const s = res.slip;
+      currentCodeItems = Array.isArray(s.codeItems) ? s.codeItems : [];
+      currentOtherItems = Array.isArray(s.otherItems) ? s.otherItems : [];
 
-  if (Array.isArray(draft.codeItems) && draft.codeItems.length > 0) {
-    currentCodeItems = draft.codeItems;
-    renderCodeItemsTable();
-  }
-  if (Array.isArray(draft.otherItems) && draft.otherItems.length > 0) {
-    currentOtherItems = draft.otherItems;
-    renderOtherItemsTable();
-  }
+      const vendorInput = document.getElementById("vendor-name-input");
+      if (vendorInput) vendorInput.value = s.vendorName || "";
+
+      // 定型品復元
+      (s.fixedItems || []).forEach(fi => {
+        const input = document.getElementById(`fixed-qty-${fi.fixedItemId}`);
+        if (input) input.value = fi.quantityInput || "";
+      });
+
+      renderCodeItemsTable();
+      renderOtherItemsTable();
+      updateWeightDisplay();
+
+      switchTab("create");
+      showAppModal({ title: "下書き再開", message: `伝票 (ID: ${s.slipId}) の入力を再開しました。` });
+    }
+  });
 }
 
-// 13. 履歴一覧 & PC からの A4 1枚印刷トリガー
-function saveSlipRecordToLocalCache(record) {
-  try {
-    const raw = localStorage.getItem("scrap_confirmed_slips");
-    const list = raw ? JSON.parse(raw) : [];
-    list.unshift(record);
-    localStorage.setItem("scrap_confirmed_slips", JSON.stringify(list.slice(0, 100)));
-  } catch (e) {}
-}
-
-function getLocalConfirmedSlips() {
-  try {
-    const raw = localStorage.getItem("scrap_confirmed_slips");
-    return raw ? JSON.parse(raw) : [];
-  } catch (e) {
-    return [];
-  }
-}
-
+// 13. 中央履歴一覧 (Central DB Source of Truth & BaseCode 共有)
 function renderHistoryTable() {
   const tbody = document.getElementById("history-table-tbody");
   if (!tbody) return;
 
-  const slips = getLocalConfirmedSlips();
+  const baseCode = resolvedBaseCode || document.getElementById("base-code-input").value.trim() || "B01";
+
+  tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--color-text-muted); padding:1.5rem;">中央DBより履歴を取得中...</td></tr>`;
+
+  // 確定伝票の取得
+  gasClient.fetchHistory({ baseCode: baseCode, status: "FINAL" }).then(res => {
+    centralHistorySlips = (res && res.success && Array.isArray(res.slips)) ? res.slips : [];
+    renderHistoryRows(tbody, centralHistorySlips);
+  }).catch(err => {
+    console.error("[app.js] fetchHistory error:", err);
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--color-danger); padding:1.5rem;">履歴の取得に失敗しました。</td></tr>`;
+  });
+
+  // 一時保存下書きの取得
+  gasClient.fetchHistory({ baseCode: baseCode, status: "DRAFT" }).then(res => {
+    centralDraftSlips = (res && res.success && Array.isArray(res.slips)) ? res.slips : [];
+    renderDraftSection(centralDraftSlips);
+  }).catch(() => {});
+}
+
+function renderDraftSection(drafts) {
+  const section = document.getElementById("draft-slips-section");
+  const list = document.getElementById("draft-slips-list");
+  if (!section || !list) return;
+
+  if (!drafts || drafts.length === 0) {
+    section.style.display = "none";
+    list.innerHTML = "";
+    return;
+  }
+
+  section.style.display = "block";
+  list.innerHTML = "";
+  drafts.forEach(d => {
+    const item = document.createElement("div");
+    item.style.cssText = "display:flex; justify-content:space-between; align-items:center; padding:0.4rem 0; border-bottom:1px solid var(--color-border); font-size:0.85rem;";
+    item.innerHTML = `
+      <div>
+        <strong>${d.slipId}</strong>
+        <span style="color:var(--color-text-muted); margin-left:0.5rem;">${(d.date || "").slice(0, 10)}</span>
+        <span style="margin-left:0.5rem;">業者: ${d.vendorName || "未入力"}</span>
+      </div>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="resumeDraftSlip('${d.slipId}')">再開</button>
+    `;
+    list.appendChild(item);
+  });
+}
+
+function renderHistoryRows(tbody, slips) {
   tbody.innerHTML = "";
 
-  if (slips.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--color-text-muted); padding:1.5rem;">確定された処分伝票はありません。</td></tr>`;
+  if (!slips || slips.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--color-text-muted); padding:1.5rem;">確定された処分伝票はありません (拠点: ${resolvedBaseName})。</td></tr>`;
     return;
   }
 
   slips.forEach((s, idx) => {
-    const dateStr = s.createdAt ? s.createdAt.slice(0, 10) : "--";
+    const dateStr = s.createdAt ? s.createdAt.slice(0, 10) : (s.date || "--");
     const sigBadge = s.signatureStatus === "DIGITAL"
       ? `<span class="brand-badge" style="background:var(--color-success); font-size:0.75rem;">電子署名済</span>`
       : `<span class="brand-badge" style="background:var(--color-tertiary); color:var(--color-headline); font-size:0.75rem;">署名なし</span>`;
@@ -801,125 +1050,230 @@ function renderHistoryTable() {
 }
 
 function printSlipFromHistory(index) {
-  const slips = getLocalConfirmedSlips();
-  const s = slips[index];
+  const s = centralHistorySlips[index];
   if (!s) return;
 
-  // A4 伝票コンテナへ流し込み
-  document.getElementById("print-slip-id").textContent = s.slipId;
-  document.getElementById("print-date").textContent = s.createdAt ? s.createdAt.slice(0, 10) : "";
-  document.getElementById("print-base-name").textContent = s.baseName;
-  document.getElementById("print-info-base").textContent = s.baseName;
-  document.getElementById("print-info-staff").textContent = s.staffName;
-  document.getElementById("print-info-vendor").textContent = s.vendorName;
-
-  // 明細テーブル (重量カラム非表示)
-  const tbody = document.getElementById("print-items-tbody");
-  tbody.innerHTML = "";
-  let lineNo = 1;
-
-  (s.codeItems || []).forEach(it => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td class="text-center">${lineNo++}</td>
-      <td>資材コード品</td>
-      <td>${it.itemName} (${it.itemCode})</td>
-      <td class="text-right">${it.quantityInput}</td>
-    `;
-    tbody.appendChild(tr);
-  });
-
-  (s.fixedItems || []).forEach(fi => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td class="text-center">${lineNo++}</td>
-      <td>定型品</td>
-      <td>${fi.itemName}</td>
-      <td class="text-right">${fi.quantityInput}</td>
-    `;
-    tbody.appendChild(tr);
-  });
-
-  (s.otherItems || []).forEach(oi => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td class="text-center">${lineNo++}</td>
-      <td>その他品</td>
-      <td>${oi.itemName}</td>
-      <td class="text-right">${oi.quantityInput}</td>
-    `;
-    tbody.appendChild(tr);
-  });
-
-  // 署名欄
-  const sigImg = document.getElementById("print-vendor-signature-img");
-  const noSigPlaceholder = document.getElementById("print-no-signature-placeholder");
-
-  if (s.signatureStatus === "DIGITAL" && s.vendorSignatureImage) {
-    sigImg.src = s.vendorSignatureImage;
-    sigImg.style.display = "block";
-    noSigPlaceholder.style.display = "none";
+  // 詳細が空の場合は Central DB から個別取得
+  if (!s.codeItems || s.codeItems.length === 0) {
+    gasClient.fetchSlip(s.slipId).then(res => {
+      if (res && res.success && res.slip) {
+        printSlipFromRecord(res.slip);
+      }
+    });
   } else {
-    sigImg.style.display = "none";
-    noSigPlaceholder.style.display = "block";
+    printSlipFromRecord(s);
+  }
+}
+
+// 14. 印刷帳票レンダリング (2x2「田」レイアウト & 右上伝票番号のみ & 署名なし空白)
+function printSlipFromRecord(s) {
+  if (!s) return;
+
+  // 右上: 伝票番号のみ
+  const slipIdEl = document.getElementById("print-slip-id");
+  if (slipIdEl) slipIdEl.textContent = s.slipId;
+
+  // 2x2「田」情報グリッド
+  const printDateEl = document.getElementById("print-info-date");
+  const printBaseEl = document.getElementById("print-info-base");
+  const printStaffEl = document.getElementById("print-info-staff");
+  const printVendorEl = document.getElementById("print-info-vendor");
+
+  if (printDateEl) printDateEl.textContent = (s.createdAt || s.date || "").slice(0, 10);
+  if (printBaseEl) printBaseEl.textContent = s.baseName || "";
+  if (printStaffEl) printStaffEl.textContent = s.staffName || "";
+  if (printVendorEl) printVendorEl.textContent = s.vendorName || "";
+
+  // 明細テーブル (重量非表示)
+  const tbody = document.getElementById("print-items-tbody");
+  if (tbody) {
+    tbody.innerHTML = "";
+    let lineNo = 1;
+
+    (s.codeItems || []).forEach(it => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="text-center">${lineNo++}</td>
+        <td>資材コード品</td>
+        <td>${it.itemName} (${it.itemCode})</td>
+        <td class="text-right">${it.quantityInput}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    (s.fixedItems || []).forEach(fi => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="text-center">${lineNo++}</td>
+        <td>定型品</td>
+        <td>${fi.itemName}</td>
+        <td class="text-right">${fi.quantityInput}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    (s.otherItems || []).forEach(oi => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="text-center">${lineNo++}</td>
+        <td>その他品</td>
+        <td>${oi.itemName}</td>
+        <td class="text-right">${oi.quantityInput}</td>
+      `;
+      tbody.appendChild(tr);
+    });
   }
 
-  // 印刷ダイアログ
+  // 署名欄: DIGITAL なら画像表示、NONE なら空白 (受領印・手書き署名等の文言は一切表示しない)
+  const sigImg = document.getElementById("print-vendor-signature-img");
+  if (sigImg) {
+    if (s.signatureStatus === "DIGITAL" && (s.vendorSignatureImage || s.signatureData)) {
+      sigImg.src = s.vendorSignatureImage || s.signatureData;
+      sigImg.style.display = "block";
+    } else {
+      sigImg.src = "";
+      sigImg.style.display = "none";
+    }
+  }
+
   setTimeout(() => {
     window.print();
   }, 200);
 }
 
-// 14. CSV エクスポート (棚卸集計対象: CODE かつ NUMBER かつ FINAL のみ)
+// 15. CSV エクスポート (履歴全体)
 function exportHistoryCsv() {
-  const slips = getLocalConfirmedSlips();
-  if (slips.length === 0) {
+  const slips = centralHistorySlips;
+  if (!slips || slips.length === 0) {
     showAppModal({ title: "お知らせ", message: "エクスポート可能な確定伝票がありません。" });
     return;
   }
 
-  let csvContent = "\uFEFF"; // Excel BOM
-  csvContent += "伝票番号,発行日,Base名,担当者,業者名,資材コード,品名,数量,数量区分,署名区分\n";
+  let csvContent = "\uFEFF";
+  csvContent += "伝票番号,発行日,Base名,担当者,業者名,資材コード,品名,数量,数量区分,署名区分\r\n";
 
   slips.forEach(s => {
     (s.codeItems || []).forEach(it => {
-      // 棚卸集計対象: Type = CODE, QuantityType = NUMBER, Status = FINAL のみ (SET・定型品・その他は数値集計から除外)
       if (s.status === "FINAL" && it.quantityType === "NUMBER" && typeof it.quantityValue === "number") {
-        csvContent += `\"${s.slipId}\",\"${s.createdAt.slice(0,10)}\",\"${s.baseName}\",\"${s.staffName}\",\"${s.vendorName}\",\"${it.itemCode}\",\"${it.itemName}\",${it.quantityValue},\"${it.quantityType}\",\"${s.signatureStatus}\"\n`;
+        csvContent += [
+          sanitizeCsvCell(s.slipId),
+          sanitizeCsvCell((s.createdAt || s.date || "").slice(0, 10)),
+          sanitizeCsvCell(s.baseName),
+          sanitizeCsvCell(s.staffName),
+          sanitizeCsvCell(s.vendorName),
+          sanitizeCsvCell(it.itemCode),
+          sanitizeCsvCell(it.itemName),
+          sanitizeCsvCell(it.quantityValue),
+          sanitizeCsvCell(it.quantityType),
+          sanitizeCsvCell(s.signatureStatus)
+        ].join(",") + "\r\n";
       }
     });
   });
 
-  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `Takamiya_ScrapInventory_${new Date().toISOString().slice(0,10)}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  downloadCsvFile(csvContent, `Takamiya_ScrapHistory_${resolvedBaseCode}_${new Date().toISOString().slice(0, 10)}.csv`);
 }
 
-// 15. タブ切り替え (通常利用者向け 3機能: 伝票入力 / 処分履歴 / 集計)
-function switchTab(tabName) {
-  ["create", "history", "summary"].forEach(t => {
-    const view = document.getElementById(`view-${t}`);
-    if (view) view.style.display = t === tabName ? "block" : "none";
-    const btn = document.getElementById(`tab-btn-${t}`);
-    if (btn) {
-      if (t === tabName) btn.classList.add("active");
-      else btn.classList.remove("active");
-    }
-  });
-
-  if (tabName === "history") renderHistoryTable();
-  if (tabName === "summary") renderSummaryView();
-}
-
+// 16. 集計画面 (Central DB Source of Truth & 期間フィルター)
 let scrapSortState = {
   column: "qty",
   order: "desc"
 };
+
+function initSummaryDates() {
+  const fromInput = document.getElementById("summary-from-date");
+  const toInput = document.getElementById("summary-to-date");
+  if (!fromInput || !toInput) return;
+
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+
+  fromInput.value = `${yyyy}-${mm}-01`;
+  toInput.value = `${yyyy}-${mm}-${dd}`;
+}
+
+function applySummaryPeriodFilter() {
+  const fromDate = document.getElementById("summary-from-date").value;
+  const toDate = document.getElementById("summary-to-date").value;
+
+  if (fromDate && toDate && fromDate > toDate) {
+    showAppModal({ title: "期間エラー", message: "開始日は終了日以前を指定してください。" });
+    return;
+  }
+
+  renderSummaryView();
+}
+
+function renderSummaryView() {
+  const baseCode = resolvedBaseCode || document.getElementById("base-code-input").value.trim() || "B01";
+  const fromDate = document.getElementById("summary-from-date") ? document.getElementById("summary-from-date").value : "";
+  const toDate = document.getElementById("summary-to-date") ? document.getElementById("summary-to-date").value : "";
+
+  gasClient.fetchSummary({ baseCode, fromDate, toDate }).then(res => {
+    if (res && res.success) {
+      currentSummaryData = res;
+      updateSummaryUi(res);
+    }
+  }).catch(err => {
+    console.error("[app.js] fetchSummary error:", err);
+  });
+}
+
+function updateSummaryUi(data) {
+  const totalSlipsEl = document.getElementById("summary-total-slips");
+  const totalWeightEl = document.getElementById("summary-total-weight");
+  const totalItemsEl = document.getElementById("summary-total-items");
+
+  if (totalSlipsEl) totalSlipsEl.textContent = data.totalSlipsCount || 0;
+  if (totalWeightEl) {
+    const wtKg = data.totalWeightKg || 0;
+    const tVal = (wtKg / 1000).toFixed(2);
+    const kgVal = Math.round(wtKg).toLocaleString();
+    totalWeightEl.textContent = `${tVal} t (${kgVal} kg)`;
+  }
+  if (totalItemsEl) totalItemsEl.textContent = data.totalItemsCount || 0;
+
+  // ソートインジケーター更新
+  ["code", "name", "qty", "weight"].forEach(col => {
+    const el = document.getElementById(`sort-icon-${col}`);
+    if (el) {
+      if (scrapSortState.column === col) {
+        el.textContent = scrapSortState.order === "asc" ? "▲" : "▼";
+      } else {
+        el.textContent = "";
+      }
+    }
+  });
+
+  // テーブルレンダリング
+  const tbody = document.getElementById("summary-items-tbody");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+
+  const items = data.items || [];
+  const sortedItems = sortScrapItems(items, scrapSortState.column, scrapSortState.order);
+
+  if (sortedItems.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--color-text-muted); padding:1rem;">指定期間の確定集計対象品目はありません。</td></tr>`;
+    return;
+  }
+
+  sortedItems.forEach(item => {
+    const tr = document.createElement("tr");
+    const weightStr = item.hasWeight
+      ? (item.totalWeightKg >= 1000 ? `${(item.totalWeightKg / 1000).toFixed(2)} t` : `${item.totalWeightKg.toFixed(1)} kg`)
+      : "-";
+    tr.innerHTML = `
+      <td><strong>${item.itemCode}</strong></td>
+      <td>${item.itemName}</td>
+      <td style="text-align:right;">${item.totalQty.toLocaleString()}</td>
+      <td style="text-align:right;">${weightStr}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
 
 function toggleScrapSort(col) {
   if (scrapSortState.column === col) {
@@ -928,55 +1282,13 @@ function toggleScrapSort(col) {
     scrapSortState.column = col;
     scrapSortState.order = (col === "qty" || col === "weight") ? "desc" : "asc";
   }
-  renderSummaryView();
-}
-
-function getAggregatedScrapItems() {
-  const slips = getLocalConfirmedSlips();
-  let totalWeightKg = 0;
-  let totalItemsCount = 0;
-  const itemMap = {};
-
-  slips.forEach(s => {
-    if (s.status === "FINAL") {
-      (s.codeItems || []).forEach(it => {
-        if (it.quantityType === "NUMBER" && typeof it.quantityValue === "number") {
-          totalItemsCount++;
-          const code = it.itemCode || "UNKNOWN";
-          const name = it.itemName || "";
-          const key = `${code}_${name}`;
-          if (!itemMap[key]) {
-            itemMap[key] = {
-              itemCode: code,
-              itemName: name,
-              totalQty: 0,
-              totalWeightKg: 0,
-              hasWeight: false
-            };
-          }
-          itemMap[key].totalQty += it.quantityValue;
-          const uw = parseFloat(it.unitWeightKg);
-          if (!isNaN(uw) && uw > 0) {
-            const wt = it.quantityValue * uw;
-            itemMap[key].totalWeightKg += wt;
-            itemMap[key].hasWeight = true;
-            totalWeightKg += wt;
-          }
-        }
-      });
-    }
-  });
-
-  return {
-    items: Object.values(itemMap),
-    totalSlipsCount: slips.length,
-    totalWeightKg: totalWeightKg,
-    totalItemsCount: totalItemsCount
-  };
+  if (currentSummaryData) {
+    updateSummaryUi(currentSummaryData);
+  }
 }
 
 function sortScrapItems(items, column, order) {
-  const list = items.map((it, idx) => ({ ...it, _idx: idx }));
+  const list = items.map((it, idx) => Object.assign({}, it, { _idx: idx }));
 
   list.sort((a, b) => {
     let cmp = 0;
@@ -1012,11 +1324,9 @@ function sortScrapItems(items, column, order) {
 function sanitizeCsvCell(val) {
   if (val === null || val === undefined) return "";
   let str = String(val);
-  // Formula injection check: if string starts with =, +, -, @, \t, \r, prepend '
   if (/^[=+\-@\t\r]/.test(str)) {
     str = "'" + str;
   }
-  // Standard CSV quoting and escaping: escape " as ""
   if (str.includes('"') || str.includes(',') || str.includes('\n') || str.includes('\r')) {
     return '"' + str.replace(/"/g, '""') + '"';
   }
@@ -1024,7 +1334,7 @@ function sanitizeCsvCell(val) {
 }
 
 function generateScrapCsvContent(sortedItems) {
-  let csv = "\uFEFF"; // UTF-8 BOM
+  let csv = "\uFEFF";
   csv += ["資材コード", "資材名", "数量", "重量"].map(sanitizeCsvCell).join(",") + "\r\n";
 
   sortedItems.forEach(item => {
@@ -1042,23 +1352,23 @@ function generateScrapCsvContent(sortedItems) {
 }
 
 function exportScrapListCsv() {
-  const data = getAggregatedScrapItems();
-  const sortedItems = sortScrapItems(data.items, scrapSortState.column, scrapSortState.order);
-
-  if (sortedItems.length === 0) {
+  if (!currentSummaryData || !Array.isArray(currentSummaryData.items) || currentSummaryData.items.length === 0) {
     showAppModal({ title: "お知らせ", message: "出力可能なスクラップ一覧データがありません。" });
     return;
   }
 
+  const sortedItems = sortScrapItems(currentSummaryData.items, scrapSortState.column, scrapSortState.order);
   const csvContent = generateScrapCsvContent(sortedItems);
 
-  const now = new Date();
-  const yyyy = now.getFullYear();
-  const mm = String(now.getMonth() + 1).padStart(2, "0");
-  const dd = String(now.getDate()).padStart(2, "0");
-  const filename = `ScrapManagement_スクラップ一覧_${yyyy}${mm}${dd}.csv`;
+  const fromDate = (document.getElementById("summary-from-date") ? document.getElementById("summary-from-date").value : "").replace(/-/g, "");
+  const toDate = (document.getElementById("summary-to-date") ? document.getElementById("summary-to-date").value : "").replace(/-/g, "");
+  const filename = `ScrapManagement_スクラップ一覧_${resolvedBaseCode}_${fromDate}-${toDate}.csv`;
 
-  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  downloadCsvFile(csvContent, filename);
+}
+
+function downloadCsvFile(content, filename) {
+  const blob = new Blob([content], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -1069,61 +1379,113 @@ function exportScrapListCsv() {
   URL.revokeObjectURL(url);
 }
 
-// 16. 集計画面レンダリング (Summary View)
-function renderSummaryView() {
-  const data = getAggregatedScrapItems();
+// 17. 設定タブ管理 (資材カテゴリ & 定型品設定)
+function renderSettingsView() {
+  const catContainer = document.getElementById("setting-categories-container");
+  const fixedContainer = document.getElementById("setting-fixed-items-container");
+  const userSettings = TerminalStorage.getUserSettings();
 
-  // サマリー数値反映
-  const totalSlipsEl = document.getElementById("summary-total-slips");
-  const totalWeightEl = document.getElementById("summary-total-weight");
-  const totalItemsEl = document.getElementById("summary-total-items");
+  // カテゴリチェックボックス
+  if (catContainer) {
+    catContainer.innerHTML = "";
+    const cats = window.AVAILABLE_CATEGORIES || [
+      { categoryCode: "PIPE", categoryName: "単管" },
+      { categoryCode: "BRACKET", categoryName: "金具" },
+      { categoryCode: "NEXTGEN", categoryName: "次世代" },
+      { categoryCode: "FRAME", categoryName: "枠組" },
+      { categoryCode: "IQ", categoryName: "IQ" }
+    ];
+    const selectedCats = userSettings.selectedMaterialCategories || [];
 
-  if (totalSlipsEl) totalSlipsEl.textContent = data.totalSlipsCount;
-  if (totalWeightEl) {
-    const tVal = (data.totalWeightKg / 1000).toFixed(2);
-    const kgVal = Math.round(data.totalWeightKg).toLocaleString();
-    totalWeightEl.textContent = `${tVal} t (${kgVal} kg)`;
+    cats.forEach(c => {
+      const isChecked = selectedCats.length === 0 || selectedCats.includes(c.categoryCode);
+      const label = document.createElement("label");
+      label.className = "checkbox-label";
+      label.innerHTML = `
+        <input type="checkbox" name="material-cat" value="${c.categoryCode}" ${isChecked ? "checked" : ""}>
+        <span>${c.categoryName} (${c.categoryCode})</span>
+      `;
+      catContainer.appendChild(label);
+    });
   }
-  if (totalItemsEl) totalItemsEl.textContent = data.totalItemsCount;
 
-  // ソートインジケーター更新
-  ["code", "name", "qty", "weight"].forEach(col => {
-    const el = document.getElementById(`sort-icon-${col}`);
-    if (el) {
-      if (scrapSortState.column === col) {
-        el.textContent = scrapSortState.order === "asc" ? "▲" : "▼";
-      } else {
-        el.textContent = "";
-      }
+  // 定型品チェックボックス
+  if (fixedContainer) {
+    fixedContainer.innerHTML = "";
+    const allFixed = (window.ACTIVE_FIXED_ITEMS && window.ACTIVE_FIXED_ITEMS.length > 0)
+      ? window.ACTIVE_FIXED_ITEMS
+      : (window.TEST_FIXTURE_FIXED_ITEMS || []);
+    const selectedFixed = userSettings.selectedFixedItemCodes || [];
+
+    allFixed.forEach(fi => {
+      const isChecked = selectedFixed.length === 0 || selectedFixed.includes(fi.fixedItemId);
+      const label = document.createElement("label");
+      label.className = "checkbox-label";
+      label.innerHTML = `
+        <input type="checkbox" name="fixed-item-pref" value="${fi.fixedItemId}" ${isChecked ? "checked" : ""}>
+        <span>${fi.itemName}</span>
+      `;
+      fixedContainer.appendChild(label);
+    });
+  }
+}
+
+function saveCategoryPreferences() {
+  const checked = Array.from(document.querySelectorAll('input[name="material-cat"]:checked')).map(el => el.value);
+  TerminalStorage.saveUserSettings({ selectedMaterialCategories: checked });
+
+  // マスタ再取得
+  gasClient.fetchMasters({ categories: checked }).then(res => {
+    if (res && res.success && Array.isArray(res.items)) {
+      window.ACTIVE_ITEMS = res.items;
+      showAppModal({ title: "設定保存", message: "使用資材カテゴリを更新しました。" });
     }
-  });
-
-  // スクラップ一覧テーブル
-  const tbody = document.getElementById("summary-items-tbody");
-  if (!tbody) return;
-  tbody.innerHTML = "";
-
-  const sortedItems = sortScrapItems(data.items, scrapSortState.column, scrapSortState.order);
-  if (sortedItems.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--color-text-muted); padding:1rem;">確定済みの集計対象品目はありません。</td></tr>`;
-    return;
-  }
-
-  sortedItems.forEach(item => {
-    const tr = document.createElement("tr");
-    const weightStr = item.hasWeight
-      ? (item.totalWeightKg >= 1000 ? `${(item.totalWeightKg / 1000).toFixed(2)} t` : `${item.totalWeightKg.toFixed(1)} kg`)
-      : "-";
-    tr.innerHTML = `
-      <td><strong>${item.itemCode}</strong></td>
-      <td>${item.itemName}</td>
-      <td style="text-align:right;">${item.totalQty.toLocaleString()}</td>
-      <td style="text-align:right;">${weightStr}</td>
-    `;
-    tbody.appendChild(tr);
   });
 }
 
+function saveFixedItemPreferences() {
+  const checked = Array.from(document.querySelectorAll('input[name="fixed-item-pref"]:checked')).map(el => el.value);
+  TerminalStorage.saveUserSettings({ selectedFixedItemCodes: checked });
+  initFixedItemsList();
+  showAppModal({ title: "設定保存", message: "使用定型品設定を更新しました。" });
+}
+
+// 18. タブ切り替え (Lazy Loading 対応)
+function switchTab(tabName) {
+  ["create", "history", "summary", "settings"].forEach(t => {
+    const view = document.getElementById(`view-${t}`);
+    if (view) view.style.display = t === tabName ? "block" : "none";
+    const btn = document.getElementById(`tab-btn-${t}`);
+    if (btn) {
+      if (t === tabName) btn.classList.add("active");
+      else btn.classList.remove("active");
+    }
+  });
+
+  if (tabName === "history") renderHistoryTable();
+  if (tabName === "summary") renderSummaryView();
+  if (tabName === "settings") renderSettingsView();
+}
+
+// 下位互換用ダミー集計ヘルパー (既存テスト検証用)
+function getAggregatedScrapItems() {
+  if (currentSummaryData && currentSummaryData.items) {
+    return {
+      items: currentSummaryData.items,
+      totalSlipsCount: currentSummaryData.totalSlipsCount || 0,
+      totalWeightKg: currentSummaryData.totalWeightKg || 0,
+      totalItemsCount: currentSummaryData.totalItemsCount || 0
+    };
+  }
+  return {
+    items: [],
+    totalSlipsCount: 0,
+    totalWeightKg: 0,
+    totalItemsCount: 0
+  };
+}
+
+// 外部モジュールエクスポート
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     scrapSortState,
@@ -1131,6 +1493,10 @@ if (typeof module !== "undefined" && module.exports) {
     getAggregatedScrapItems,
     sortScrapItems,
     sanitizeCsvCell,
-    generateScrapCsvContent
+    generateScrapCsvContent,
+    stepCodeItemQty,
+    resetInputFormAfterSubmission,
+    verifyAndSaveEmployee,
+    applySummaryPeriodFilter
   };
 }

@@ -5,24 +5,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>ScrapManagement - スクラップ処分記録</title>
   <link rel="stylesheet" href="src/css/style.css">
-  <link rel="stylesheet" href="src/css/print.css">
+  <link rel="stylesheet" href="src/css/print.css" media="print">
 </head>
 <body>
-  <!-- アプリヘッダー -->
+  <!-- アプリヘッダー (通常状態では環境名や会社名のバナーを表示しない) -->
   <header class="app-header no-print">
-    <div class="brand-container">
-      <h1 class="brand-title">ScrapManagement</h1>
+    <div class="header-inner">
+      <h1 class="header-title">ScrapManagement</h1>
       <span id="mock-warning-badge" class="badge-mock" style="display:none;">MOCKモード</span>
     </div>
   </header>
 
   <!-- メインコンテンツ -->
   <main class="main-container no-print">
-    <!-- タブナビゲーション (通常利用者向け 3機能のみ) -->
+    <!-- タブナビゲーション (通常利用者向け: 伝票入力 / 処分履歴 / 集計 / 設定) -->
     <nav class="tab-nav">
       <button class="tab-btn active" id="tab-btn-create" onclick="switchTab('create')">伝票入力</button>
       <button class="tab-btn" id="tab-btn-history" onclick="switchTab('history')">処分履歴</button>
       <button class="tab-btn" id="tab-btn-summary" onclick="switchTab('summary')">集計</button>
+      <button class="tab-btn" id="tab-btn-settings" onclick="switchTab('settings')">設定</button>
     </nav>
 
     <!-- 画面1: 伝票入力画面 (スマホ最適化) -->
@@ -31,8 +32,8 @@
       <div class="card">
         <h2 class="card-title">1. 拠点・担当・引取業者情報</h2>
         <div class="form-grid">
-          <!-- BaseCode 入力 -->
-          <div class="form-group">
+          <!-- BaseCode 入力 (社員番号設定時は内部値保持) -->
+          <div class="form-group" id="base-code-group">
             <label class="form-label" for="base-code-input">拠点コード <span style="color:var(--color-danger)">*</span></label>
             <input type="text" id="base-code-input" class="form-input" placeholder="例: B01, B19" autocomplete="off" autocapitalize="characters" required>
             <div id="base-code-autocomplete" class="autocomplete-box"></div>
@@ -40,7 +41,7 @@
           <!-- BaseName 自動表示 (編集不可) -->
           <div class="form-group">
             <label class="form-label" for="base-name-display">拠点名 (自動表示)</label>
-            <input type="text" id="base-name-display" class="form-input" placeholder="拠点コードを入力すると自動表示" readonly>
+            <input type="text" id="base-name-display" class="form-input input-readonly" placeholder="拠点コードを入力すると自動表示" readonly>
           </div>
           <!-- 担当者名 (株式会社タカミヤ側) -->
           <div class="form-group">
@@ -66,7 +67,7 @@
           </div>
           <div class="form-group" style="flex:2;">
             <label class="form-label" for="item-name-display">品名 (自動表示・編集不可)</label>
-            <input type="text" id="item-name-display" class="form-input" placeholder="コード入力で自動補完" readonly>
+            <input type="text" id="item-name-display" class="form-input input-readonly" placeholder="コード入力で自動補完" readonly>
           </div>
           <div class="form-group" style="flex:1;">
             <label class="form-label" for="item-qty-input">数量 (加算式・一式可)</label>
@@ -100,56 +101,56 @@
         </div>
       </div>
 
-      <!-- 定型品セクション (Fixed Items) -->
+      <!-- 定型品入力カード -->
       <div class="card">
         <h2 class="card-title">3. 定型品入力</h2>
         <div class="materials-table-wrapper">
-          <table class="materials-table">
+          <table class="materials-table responsive-table">
             <thead>
               <tr>
                 <th style="width:65%;">定型品名</th>
-                <th style="width:35%;">数量 (加算式・一式可)</th>
+                <th style="width:35%; text-align:right;">数量入力</th>
               </tr>
             </thead>
             <tbody id="fixed-items-tbody">
-              <!-- 定型品マスタから展開 -->
+              <!-- 定型品一覧 -->
             </tbody>
           </table>
         </div>
       </div>
 
-      <!-- その他品セクション (Other Items) -->
+      <!-- その他品目入力カード (自由入力) -->
       <div class="card">
         <h2 class="card-title">4. その他品目入力 (自由入力)</h2>
         <div class="form-grid" style="margin-bottom:0.75rem;">
           <div class="form-group" style="flex:2;">
-            <label class="form-label" for="other-name-input">品名 (自由入力)</label>
-            <input type="text" id="other-name-input" class="form-input" placeholder="例: 特殊加工鉄くず">
+            <label class="form-label" for="other-name-input">品名・備考</label>
+            <input type="text" id="other-name-input" class="form-input" placeholder="例: 混合スクラップ(木・鉄混在)">
           </div>
           <div class="form-group" style="flex:1;">
-            <label class="form-label" for="other-qty-input">数量 (加算式・一式可)</label>
-            <input type="text" id="other-qty-input" class="form-input" placeholder="例: 5, 一式">
+            <label class="form-label" for="other-qty-input">数量・単位</label>
+            <input type="text" id="other-qty-input" class="form-input" placeholder="例: 1式, 3箱">
           </div>
         </div>
         <button type="button" class="btn btn-secondary" style="width:100%;" onclick="addOtherItemFromForm()">その他品目に追加</button>
 
         <div class="materials-table-wrapper" style="margin-top:1rem;">
-          <table class="materials-table responsive-table compact-horizontal-table">
+          <table class="materials-table responsive-table">
             <thead>
               <tr>
-                <th class="col-name">品名</th>
-                <th class="col-qty">数量</th>
-                <th class="col-delete">操作</th>
+                <th style="width:55%;">品名・備考</th>
+                <th style="width:30%;">数量</th>
+                <th style="width:15%; text-align:center;">操作</th>
               </tr>
             </thead>
             <tbody id="other-items-tbody">
-              <!-- その他品目行 -->
+              <!-- 動的明細行 -->
             </tbody>
           </table>
         </div>
       </div>
 
-      <!-- スクラップ業者単独確認署名カード (モーダル方式 & 完了後大画面プレビュー) -->
+      <!-- スクラップ引取業者 確認署名カード -->
       <div class="card">
         <h2 class="card-title">5. スクラップ引取業者 確認署名 (任意)</h2>
         
@@ -176,26 +177,33 @@
         </div>
       </div>
 
-      <!-- フォーム下部アクションボタン (Document Flow内 最下部配置) -->
-      <div class="bottom-action-bar no-print">
+      <!-- 最下部アクションボタン (Document Flow内静的配置・固定禁止) -->
+      <div class="bottom-action-bar">
         <div class="action-bar-inner">
-          <button type="button" class="btn btn-secondary" onclick="saveTemporaryDraft()">一時保存</button>
-          <button type="button" class="btn btn-primary" id="btn-finalize" onclick="handleFinalizeButton()">完了</button>
+          <button type="button" class="btn btn-secondary" id="btn-save-draft" onclick="saveTemporaryDraft()">一時保存</button>
+          <button type="button" class="btn btn-primary" id="btn-finalize" onclick="handleFinalizeButtonClick()">完了</button>
         </div>
       </div>
     </section>
 
-    <!-- 画面2: 処分履歴画面 -->
+    <!-- 画面2: 処分履歴一覧画面 -->
     <section id="view-history" class="view-panel" style="display:none;">
       <div class="card">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:0.5rem;">
-          <h2 class="card-title" style="margin:0; border-bottom:none;">確定処分記録一覧</h2>
+          <h2 class="card-title" style="margin:0; border-bottom:none;">確定処分記録一覧 (中央DB)</h2>
           <button type="button" class="btn btn-secondary" onclick="exportHistoryCsv()">CSVエクスポート</button>
         </div>
+
+        <!-- 一時保存伝票再開セクション -->
+        <div id="draft-slips-section" style="display:none; margin-bottom:1.5rem; padding:0.75rem; background:var(--color-surface-subtle); border:1px dashed var(--color-tertiary); border-radius:var(--radius-sm);">
+          <h3 style="font-size:0.95rem; font-weight:700; margin-bottom:0.5rem; color:var(--color-headline);">一時保存中の伝票</h3>
+          <div id="draft-slips-list"></div>
+        </div>
+
         <div class="materials-table-wrapper">
           <table class="materials-table history-table" id="history-table">
             <thead>
-              <tr>
+              <tr class="hist-desktop-col">
                 <th>伝票番号</th>
                 <th>発行日</th>
                 <th>拠点名</th>
@@ -217,7 +225,19 @@
     <!-- 画面3: 集計画面 -->
     <section id="view-summary" class="view-panel" style="display:none;">
       <div class="card">
-        <h2 class="card-title">スクラップ処分実績 集計サマリー</h2>
+        <h2 class="card-title">スクラップ処分実績 集計サマリー (中央DB)</h2>
+
+        <!-- 集計期間フィルター -->
+        <div class="summary-period-filter-card">
+          <div class="period-filter-group">
+            <label for="summary-from-date" style="font-weight:700; font-size:0.85rem; color:var(--color-headline);">集計期間:</label>
+            <input type="date" id="summary-from-date" class="form-input" style="width:auto; padding:0.3rem 0.5rem; font-size:0.85rem;">
+            <span class="period-separator">〜</span>
+            <input type="date" id="summary-to-date" class="form-input" style="width:auto; padding:0.3rem 0.5rem; font-size:0.85rem;">
+            <button type="button" class="btn btn-primary btn-sm" id="btn-summary-search" onclick="applySummaryPeriodFilter()">表示</button>
+          </div>
+        </div>
+
         <div class="summary-grid">
           <div class="summary-stat-card">
             <div class="summary-stat-value" id="summary-total-slips">0</div>
@@ -263,6 +283,59 @@
               <!-- 品目別集計行 -->
             </tbody>
           </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- 画面4: 設定画面 (利用者向け: 社員番号・使用カテゴリ・定型品) -->
+    <section id="view-settings" class="view-panel" style="display:none;">
+      <div class="card">
+        <h2 class="card-title">利用者設定</h2>
+
+        <!-- 社員番号設定 -->
+        <div class="settings-section">
+          <h3 class="settings-subheading">社員番号設定 (所属拠点・担当者)</h3>
+          <p style="font-size:0.8rem; color:var(--color-text-muted); margin-bottom:0.6rem;">社員番号を入力して確認・保存すると、所属拠点と担当者名が自動設定されます。</p>
+          <div class="form-grid">
+            <div class="form-group" style="flex:1;">
+              <label class="form-label" for="setting-employee-no">社員番号 <span style="color:var(--color-danger)">*</span></label>
+              <div style="display:flex; gap:0.5rem;">
+                <input type="text" id="setting-employee-no" class="form-input" placeholder="例: E00001" autocomplete="off" autocapitalize="characters">
+                <button type="button" class="btn btn-primary" id="btn-verify-employee" onclick="verifyAndSaveEmployee()" style="white-space:nowrap; padding:0.4rem 0.9rem;">確認 / 保存</button>
+              </div>
+            </div>
+          </div>
+          <div class="form-grid" style="margin-top:0.75rem;">
+            <div class="form-group">
+              <label class="form-label" for="setting-employee-name">担当者名 (自動設定・変更不可)</label>
+              <input type="text" id="setting-employee-name" class="form-input input-readonly" readonly placeholder="社員番号から自動取得">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="setting-base-name">所属拠点 (自動設定・変更不可)</label>
+              <input type="text" id="setting-base-name" class="form-input input-readonly" readonly placeholder="社員番号から自動取得">
+            </div>
+          </div>
+          <div id="setting-employee-status" style="margin-top:0.5rem; font-size:0.85rem;"></div>
+        </div>
+
+        <!-- 使用資材カテゴリ設定 -->
+        <div class="settings-section" style="border-top:1px solid var(--color-border); padding-top:1.2rem;">
+          <h3 class="settings-subheading">使用資材カテゴリ</h3>
+          <p style="font-size:0.8rem; color:var(--color-text-muted); margin-bottom:0.6rem;">日常業務で使用する資材カテゴリを選択してください（未選択時は全カテゴリが対象となります）。</p>
+          <div id="setting-categories-container" class="settings-checkbox-grid">
+            <!-- 動的カテゴリチェックボックス -->
+          </div>
+          <button type="button" class="btn btn-secondary btn-sm" style="margin-top:0.8rem;" onclick="saveCategoryPreferences()">カテゴリ設定を保存</button>
+        </div>
+
+        <!-- 使用定型品設定 -->
+        <div class="settings-section" style="border-top:1px solid var(--color-border); padding-top:1.2rem;">
+          <h3 class="settings-subheading">使用定型品</h3>
+          <p style="font-size:0.8rem; color:var(--color-text-muted); margin-bottom:0.6rem;">伝票入力に表示する定型品を選択してください。</p>
+          <div id="setting-fixed-items-container" class="settings-checkbox-grid">
+            <!-- 動的定型品チェックボックス -->
+          </div>
+          <button type="button" class="btn btn-secondary btn-sm" style="margin-top:0.8rem;" onclick="saveFixedItemPreferences()">定型品設定を保存</button>
         </div>
       </div>
     </section>
@@ -324,6 +397,7 @@
       <h3 class="modal-title completion-title">完了しました</h3>
       <div class="completion-actions">
         <button type="button" class="btn btn-primary" id="btn-completion-print" onclick="handleCompletionPrint()">印刷</button>
+        <button type="button" class="btn btn-secondary" id="btn-completion-close" onclick="closeCompletionModalAndReset()" style="margin-top:0.5rem;">閉じる</button>
       </div>
     </div>
   </div>
@@ -336,25 +410,34 @@
         <div style="font-size:9pt; margin-top:2px;">株式会社タカミヤ</div>
       </div>
       <div>
-        <table class="slip-meta-table">
-          <tr><td>伝票番号</td><td id="print-slip-id">SCRAP-0000</td></tr>
-          <tr><td>発行日時</td><td id="print-date">2026/09/19</td></tr>
-          <tr><td>発行拠点</td><td id="print-base-name">--</td></tr>
-        </table>
+        <div class="slip-meta-box">
+          <div class="slip-meta-label">伝票番号</div>
+          <div class="slip-meta-val" id="print-slip-id">SCRAP-0000</div>
+        </div>
       </div>
     </div>
 
-    <!-- 伝票情報テーブル (BaseNameのみ印刷、BaseCode非表示、重量非表示) -->
-    <table class="slip-info-table">
+    <!-- 2列×2行「田」レイアウト情報テーブル -->
+    <table class="slip-info-grid-table">
       <tr>
-        <td class="info-label">拠点名</td>
-        <td class="info-value" id="print-info-base">--</td>
-        <td class="info-label">株式会社タカミヤ 担当者</td>
-        <td class="info-value" id="print-info-staff">--</td>
+        <td class="info-cell-half">
+          <div class="info-grid-label">発行日時</div>
+          <div class="info-grid-val" id="print-info-date">2026/09/21</div>
+        </td>
+        <td class="info-cell-half">
+          <div class="info-grid-label">拠点名</div>
+          <div class="info-grid-val" id="print-info-base">--</div>
+        </td>
       </tr>
       <tr>
-        <td class="info-label">スクラップ引取業者</td>
-        <td class="info-value" colspan="3" id="print-info-vendor">--</td>
+        <td class="info-cell-half">
+          <div class="info-grid-label">株式会社タカミヤ担当者</div>
+          <div class="info-grid-val" id="print-info-staff">--</div>
+        </td>
+        <td class="info-cell-half">
+          <div class="info-grid-label">スクラップ引取業者</div>
+          <div class="info-grid-val" id="print-info-vendor">--</div>
+        </td>
       </tr>
     </table>
 
@@ -373,16 +456,15 @@
       </tbody>
     </table>
 
-    <!-- 業者単独受領署名ブロック -->
+    <!-- 業者単独受領署名ブロック (署名なし時は空白) -->
     <div class="slip-signature-container">
       <div class="slip-signature-box">
         <div style="font-weight:bold; font-size:8.5pt;">【業者様受領署名】</div>
         <div style="text-align:center; height:65px; display:flex; align-items:center; justify-content:center;" id="print-signature-area">
           <!-- DIGITAL なら画像、NONE なら手書き枠空白 -->
           <img id="print-vendor-signature-img" class="signature-img-preview" alt="業者署名" style="display:none;">
-          <span id="print-no-signature-placeholder" style="color:#888; font-size:8pt; border-bottom:1px solid #ccc; width:80%; display:none; padding-bottom:4px;">(受領印または手書き署名)</span>
         </div>
-        <div style="font-size:7pt; color:#666; text-align:right;">上記資材を正に受領いたしました</div>
+        <div style="font-size:7pt; color:#666; text-align:right;">上記資材を受領いたしました</div>
       </div>
     </div>
   </div>
