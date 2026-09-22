@@ -509,6 +509,11 @@ function addCodeItemFromForm() {
     return;
   }
 
+  if (parsedQty.type === "NUMBER" && parsedQty.value <= 0) {
+    showAppModal({ title: "数量エラー", message: "数量を1以上にしてください。" });
+    return;
+  }
+
   const itemMaster = ItemService.findExactItem(code) || { unitWeightKg: null };
 
   currentCodeItems.push({
@@ -640,7 +645,7 @@ function initFixedItemsList() {
         <div class="qty-input-group fixed-qty-group">
           <button type="button" class="btn-qty-input-step" id="btn-fixed-minus-${fi.fixedItemId}" onclick="stepFixedItemQuantity('${fi.fixedItemId}', -1)" aria-label="${fi.itemName}の数量を1減らす">－</button>
           <input type="text" class="form-input" style="padding:0.4rem 0.4rem; text-align:center;"
-            placeholder="例: 2, 一式" id="fixed-qty-${fi.fixedItemId}">
+            placeholder="例: 1, 一式" id="fixed-qty-${fi.fixedItemId}">
           <button type="button" class="btn-qty-input-step" id="btn-fixed-plus-${fi.fixedItemId}" onclick="stepFixedItemQuantity('${fi.fixedItemId}', 1)" aria-label="${fi.itemName}の数量を1増やす">＋</button>
         </div>
       </td>
@@ -665,7 +670,7 @@ function stepFixedItemQuantity(fixedItemId, delta) {
   if (!qtyInput) return;
 
   const raw = qtyInput.value.trim();
-  if (raw === "一式" || raw === "1式") {
+  if (raw === "一式" || raw === "1式" || raw.toLowerCase() === "set") {
     return; // 一式: 値を変更しない
   }
 
@@ -705,6 +710,7 @@ function collectFixedItems() {
       if (raw === "0") return; // 0 は保存対象外 (未選択・数量なし扱い)
       const parsed = QuantityEngine.parseQuantity(raw);
       if (parsed.valid) {
+        if (parsed.type === "NUMBER" && parsed.value <= 0) return; // 0 (5-5等) は保存対象外
         result.push({
           fixedItemId: fi.fixedItemId,
           itemName: fi.itemName,

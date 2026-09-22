@@ -56,9 +56,9 @@
         </div>
       </div>
 
-      <!-- 資材コード品入力カード -->
+      <!-- 資材入力カード -->
       <div class="card">
-        <h2 class="card-title">2. 資材コード品入力</h2>
+        <h2 class="card-title">2. 資材入力</h2>
         <div class="form-grid" style="margin-bottom:0.75rem;">
           <div class="form-group" style="flex:1;">
             <label class="form-label" for="item-code-input">資材コード</label>
@@ -66,14 +66,14 @@
             <div id="item-code-autocomplete" class="autocomplete-box"></div>
           </div>
           <div class="form-group" style="flex:2;">
-            <label class="form-label" for="item-name-display">品名 (自動表示・編集不可)</label>
-            <input type="text" id="item-name-display" class="form-input input-readonly" placeholder="コード入力で自動補完" readonly>
+            <label class="form-label" for="item-name-display">品名</label>
+            <input type="text" id="item-name-display" class="form-input input-readonly" placeholder="自動表示・編集不可" readonly>
           </div>
           <div class="form-group" style="flex:1;">
-            <label class="form-label" for="item-qty-input">数量 (加算式・一式可)</label>
+            <label class="form-label" for="item-qty-input">数量</label>
             <div class="qty-input-group">
               <button type="button" class="btn-qty-input-step" id="btn-qty-minus" onclick="stepFormQuantity(-1)" aria-label="1減らす">－</button>
-              <input type="text" id="item-qty-input" class="form-input" placeholder="例: 10, 10+5, 一式">
+              <input type="text" id="item-qty-input" class="form-input" placeholder="例: 10, 10+5, 10×2, 一式">
               <button type="button" class="btn-qty-input-step" id="btn-qty-plus" onclick="stepFormQuantity(1)" aria-label="1増やす">＋</button>
             </div>
           </div>
@@ -128,12 +128,12 @@
         <h2 class="card-title">4. その他（自由入力）</h2>
         <div class="form-grid" style="margin-bottom:0.75rem;">
           <div class="form-group" style="flex:2;">
-            <label class="form-label" for="other-name-input">品名・備考</label>
-            <input type="text" id="other-name-input" class="form-input" placeholder="例: 混合スクラップ(木・鉄混在)">
+            <label class="form-label" for="other-name-input">品名</label>
+            <input type="text" id="other-name-input" class="form-input" placeholder="例: 簿外品、社外品">
           </div>
           <div class="form-group" style="flex:1;">
-            <label class="form-label" for="other-qty-input">数量・単位</label>
-            <input type="text" id="other-qty-input" class="form-input" placeholder="例: 1式, 3箱">
+            <label class="form-label" for="other-qty-input">数量</label>
+            <input type="text" id="other-qty-input" class="form-input" placeholder="例: 1カゴ、一式">
           </div>
         </div>
         <button type="button" class="btn btn-secondary" style="width:100%;" onclick="addOtherItemFromForm()">その他に追加</button>
