@@ -49,16 +49,29 @@ if (typeof document !== "undefined") {
   });
 }
 
-// 1. GAS クライアント初期化 & マスタ同期 (カテゴリ対応 & リビジョンキャッシュ)
+// カテゴリフィルタリング用ヘルパー (CASE A: 全品からローカル抽出)
+function applyMaterialCategoryFilter(allItems, selectedCategories) {
+  if (!allItems || !Array.isArray(allItems)) return [];
+  if (!selectedCategories || selectedCategories.length === 0) return allItems;
+  return allItems.filter(it => {
+    const cat = it.categoryCode || it.category;
+    return !cat || selectedCategories.includes(cat);
+  });
+}
+
+// 1. GAS クライアント初期化 & マスタ同期 (全品キャッシュ & ローカルカテゴリフィルタ & リビジョンキャッシュ)
 function initGasClient() {
   gasClient = new GasClient();
   updateNetworkStatus();
 
   // Fast Path: マスタキャッシュ (localStorage) があれば即時復元して画面操作可能へ
   const cachedMasters = TerminalStorage.getMasterCache();
+  const userSettings = TerminalStorage.getUserSettings();
   if (cachedMasters && cachedMasters.bases && cachedMasters.bases.length > 0) {
     window.ACTIVE_BASES = cachedMasters.bases;
-    if (cachedMasters.items && cachedMasters.items.length > 0) window.ACTIVE_ITEMS = cachedMasters.items;
+    const allItems = cachedMasters.allItems || cachedMasters.items || [];
+    window.ACTIVE_ALL_ITEMS = allItems;
+    window.ACTIVE_ITEMS = applyMaterialCategoryFilter(allItems, userSettings.selectedMaterialCategories);
     if (cachedMasters.fixedItems && cachedMasters.fixedItems.length > 0) {
       window.ACTIVE_FIXED_ITEMS = cachedMasters.fixedItems;
       initFixedItemsList();
@@ -75,8 +88,20 @@ function initGasClient() {
 function checkMasterRevisionAndUpdate() {
   const cachedMasters = TerminalStorage.getMasterCache();
   const cachedRev = (cachedMasters && cachedMasters.masterRevision) ? cachedMasters.masterRevision : 0;
+  const baseCode = resolvedBaseCode || "GLOBAL";
 
-  gasClient.fetchState("GLOBAL").then(stateRes => {
+  // 既存の fresh な snapshot があれば通信せず比較
+  const existingSnapshot = TerminalStorage.getStateSnapshot(baseCode);
+  if (existingSnapshot && existingSnapshot.masterRevision !== undefined && TerminalStorage.isStateSnapshotFresh(baseCode)) {
+    if (cachedMasters && existingSnapshot.masterRevision === cachedRev) {
+      return;
+    }
+  }
+
+  gasClient.fetchState(baseCode).then(stateRes => {
+    if (stateRes && stateRes.success) {
+      TerminalStorage.saveStateSnapshot(baseCode, stateRes);
+    }
     const serverMasterRev = (stateRes && stateRes.success && stateRes.masterRevision) ? stateRes.masterRevision : null;
     // キャッシュなし、または MasterRevision が更新されている場合のみ fetchMasters を実行
     if (!cachedMasters || serverMasterRev === null || serverMasterRev !== cachedRev) {
@@ -91,12 +116,14 @@ function checkMasterRevisionAndUpdate() {
 
 function fetchAndApplyMasters(targetRevision = 1) {
   const userSettings = TerminalStorage.getUserSettings();
-  const catOptions = { categories: userSettings.selectedMaterialCategories || [] };
 
-  gasClient.fetchMasters(catOptions).then(res => {
+  // CASE A: 全品マスタを取得し、ローカルでフィルタリングする
+  gasClient.fetchMasters({}).then(res => {
     if (res && res.success) {
       if (Array.isArray(res.bases) && res.bases.length > 0) window.ACTIVE_BASES = res.bases;
-      if (Array.isArray(res.items) && res.items.length > 0) window.ACTIVE_ITEMS = res.items;
+      const allItems = Array.isArray(res.items) ? res.items : [];
+      window.ACTIVE_ALL_ITEMS = allItems;
+      window.ACTIVE_ITEMS = applyMaterialCategoryFilter(allItems, userSettings.selectedMaterialCategories);
       if (Array.isArray(res.fixedItems) && res.fixedItems.length > 0) {
         window.ACTIVE_FIXED_ITEMS = res.fixedItems;
         initFixedItemsList();
@@ -104,9 +131,10 @@ function fetchAndApplyMasters(targetRevision = 1) {
       if (Array.isArray(res.categories) && res.categories.length > 0) {
         window.AVAILABLE_CATEGORIES = res.categories;
       }
-      // マスタキャッシュ保存
+      // マスタキャッシュ保存 (全品 allItems を保存)
       TerminalStorage.saveMasterCache({
         bases: window.ACTIVE_BASES,
+        allItems: allItems,
         items: window.ACTIVE_ITEMS,
         fixedItems: window.ACTIVE_FIXED_ITEMS,
         categories: window.AVAILABLE_CATEGORIES
@@ -1488,19 +1516,33 @@ function renderHistoryTable() {
     centralDraftSlips = cached.draftSlips || [];
     renderHistoryRows(tbody, centralHistorySlips);
     renderDraftSection(centralDraftSlips);
-
-    // 2. 30秒スロットル内なら通信 0 で終了
-    if (TerminalStorage.isStateCheckThrottled(baseCode)) {
-      return;
-    }
   } else {
     // 初回キャッシュ未存在時のみ Loading 表示
     tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--color-text-muted); padding:1.5rem;">履歴を取得中...</td></tr>`;
   }
 
-  // 3. State API 確認 (軽量リビジョン取得)
+  // 2. State Snapshot チェック (30秒スロットル共有 & 判定不省略)
+  if (TerminalStorage.isStateSnapshotFresh(baseCode)) {
+    const snapshot = TerminalStorage.getStateSnapshot(baseCode);
+    const snapshotHistRev = snapshot && snapshot.historyRevision !== undefined ? snapshot.historyRevision : null;
+    // キャッシュがあり、かつスナップショットのリビジョンと一致しているなら通信 0 で終了
+    if (cached && snapshotHistRev !== null && cached.historyRevision === snapshotHistRev) {
+      return;
+    }
+    // スナップショットでリビジョン不一致が検知された場合は本体取得へ進む (通信 0 で検知!)
+    if (snapshotHistRev !== null) {
+      fetchAndRenderHistory(tbody, baseCode, snapshotHistRev);
+      return;
+    }
+  }
+
+  // 3. State API 確認 (スナップショット期限切れ時: 軽量リビジョン取得)
   gasClient.fetchState(baseCode).then(stateRes => {
-    TerminalStorage.setLastStateCheckTime(baseCode);
+    if (stateRes && stateRes.success) {
+      TerminalStorage.saveStateSnapshot(baseCode, stateRes);
+    } else {
+      TerminalStorage.setLastStateCheckTime(baseCode);
+    }
     const serverHistRev = (stateRes && stateRes.success && stateRes.historyRevision !== undefined)
       ? stateRes.historyRevision
       : null;
@@ -1786,11 +1828,6 @@ function renderSummaryView() {
   if (cachedData) {
     currentSummaryData = cachedData;
     updateSummaryUi(cachedData);
-
-    // 2. 30秒スロットル内なら通信 0 で終了
-    if (TerminalStorage.isStateCheckThrottled(baseCode)) {
-      return;
-    }
   } else {
     // 初回キャッシュなし時のみ Loading 表示
     if (tbody) {
@@ -1798,9 +1835,28 @@ function renderSummaryView() {
     }
   }
 
-  // 3. State API 確認 (軽量リビジョン取得)
+  // 2. State Snapshot チェック (30秒スロットル共有 & 判定不省略)
+  if (TerminalStorage.isStateSnapshotFresh(baseCode)) {
+    const snapshot = TerminalStorage.getStateSnapshot(baseCode);
+    const snapshotSummRev = snapshot && snapshot.summaryRevision !== undefined ? snapshot.summaryRevision : null;
+    // キャッシュがあり、かつスナップショットのリビジョンと一致しているなら通信 0 で終了
+    if (cached && snapshotSummRev !== null && cached.summaryRevision === snapshotSummRev) {
+      return;
+    }
+    // スナップショットでリビジョン不一致が検知された場合は本体取得へ進む (通信 0 で検知!)
+    if (snapshotSummRev !== null) {
+      fetchAndRenderSummary(tbody, baseCode, fromDate, toDate, snapshotSummRev);
+      return;
+    }
+  }
+
+  // 3. State API 確認 (スナップショット期限切れ時: 軽量リビジョン取得)
   gasClient.fetchState(baseCode).then(stateRes => {
-    TerminalStorage.setLastStateCheckTime(baseCode);
+    if (stateRes && stateRes.success) {
+      TerminalStorage.saveStateSnapshot(baseCode, stateRes);
+    } else {
+      TerminalStorage.setLastStateCheckTime(baseCode);
+    }
     const serverSummRev = (stateRes && stateRes.success && stateRes.summaryRevision !== undefined)
       ? stateRes.summaryRevision
       : null;
@@ -2072,13 +2128,23 @@ function saveCategoryPreferences() {
   const checked = Array.from(document.querySelectorAll('input[name="material-cat"]:checked')).map(el => el.value);
   TerminalStorage.saveUserSettings({ selectedMaterialCategories: checked });
 
-  // マスタ再取得
-  gasClient.fetchMasters({ categories: checked }).then(res => {
-    if (res && res.success && Array.isArray(res.items)) {
-      window.ACTIVE_ITEMS = res.items;
-      showAppModal({ title: "設定保存", message: "使用資材カテゴリを更新しました。" });
-    }
-  });
+  // CASE A: ネットワーク通信なし (通信 0) で allItems から即座にローカル再フィルタ
+  const cachedMasters = TerminalStorage.getMasterCache();
+  const allItems = window.ACTIVE_ALL_ITEMS || (cachedMasters && (cachedMasters.allItems || cachedMasters.items)) || [];
+  window.ACTIVE_ITEMS = applyMaterialCategoryFilter(allItems, checked);
+
+  // キャッシュ内の items も最新フィルタ結果に更新
+  if (cachedMasters) {
+    TerminalStorage.saveMasterCache({
+      bases: cachedMasters.bases,
+      allItems: allItems,
+      items: window.ACTIVE_ITEMS,
+      fixedItems: cachedMasters.fixedItems,
+      categories: cachedMasters.categories
+    }, cachedMasters.masterRevision || 1);
+  }
+
+  showAppModal({ title: "設定保存", message: "使用資材カテゴリを更新しました。" });
 }
 
 function saveFixedItemPreferences() {
@@ -2169,6 +2235,9 @@ if (typeof module !== "undefined" && module.exports) {
     getJstDateString,
     showEmployeeUnconfiguredBanner,
     hideEmployeeUnconfiguredBanner,
+    applyMaterialCategoryFilter,
+    saveCategoryPreferences,
+    fetchAndApplyMasters,
     getResolvedEmployeeInfo: () => ({
       resolvedEmployeeNo,
       resolvedEmployeeName,

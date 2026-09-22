@@ -557,10 +557,17 @@ class GasClient {
   }
 
   // 10. 下書き削除 (POST action=delete-draft)
-  async deleteDraft(params = {}) {
-    const scrapId = params.scrapId || params.draftId || params.slipId;
-    const baseCode = params.baseCode;
-    const employeeNo = params.employeeNo || "";
+  async deleteDraft(params = {}, legacyBaseCode, legacyEmployeeNo) {
+    let scrapId, baseCode, employeeNo;
+    if (typeof params === "string") {
+      scrapId = params;
+      baseCode = legacyBaseCode;
+      employeeNo = legacyEmployeeNo || "";
+    } else {
+      scrapId = params.scrapId || params.draftId || params.slipId;
+      baseCode = params.baseCode;
+      employeeNo = params.employeeNo || "";
+    }
 
     if (!scrapId) {
       return { success: false, error: "MISSING_DRAFT_ID", message: "Draft ID is required." };

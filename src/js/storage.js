@@ -52,6 +52,15 @@ function clearUserSettings() {
   } catch (e) {}
 }
 
+function getSelectedMaterialCategories() {
+  const settings = getUserSettings();
+  return Array.isArray(settings.selectedMaterialCategories) ? settings.selectedMaterialCategories : [];
+}
+
+function saveSelectedMaterialCategories(categories) {
+  saveUserSettings({ selectedMaterialCategories: Array.isArray(categories) ? categories : [] });
+}
+
 // 2. 前回値保持 (BaseCode, BaseName, 担当者名, スクラップ業者名)
 function getPreviousInput() {
   try {
@@ -148,10 +157,11 @@ function isStateCheckThrottled(baseCode) {
   return (Date.now() - last) < STATE_THROTTLE_MS;
 }
 
-// 1. マスタキャッシュ (localStorage)
-function getMasterCache() {
+// State Snapshot (Base別軽量状態スナップショット)
+function getStateSnapshot(baseCode) {
+  if (!baseCode) return null;
   try {
-    const raw = localStorage.getItem("scrap_cache_master");
+    const raw = sessionStorage.getItem(`scrap_state_snapshot_${baseCode || "GLOBAL"}`);
     if (!raw) return null;
     return JSON.parse(raw);
   } catch (e) {
@@ -159,12 +169,52 @@ function getMasterCache() {
   }
 }
 
+function saveStateSnapshot(baseCode, stateData) {
+  if (!baseCode || !stateData) return;
+  try {
+    const payload = {
+      baseCode: baseCode,
+      masterRevision: stateData.masterRevision !== undefined ? stateData.masterRevision : 1,
+      historyRevision: stateData.historyRevision !== undefined ? stateData.historyRevision : 1,
+      summaryRevision: stateData.summaryRevision !== undefined ? stateData.summaryRevision : 1,
+      serverTime: stateData.serverTime || "",
+      checkedAt: Date.now()
+    };
+    sessionStorage.setItem(`scrap_state_snapshot_${baseCode || "GLOBAL"}`, JSON.stringify(payload));
+    setLastStateCheckTime(baseCode, payload.checkedAt);
+  } catch (e) {}
+}
+
+function isStateSnapshotFresh(baseCode, ttlMs = STATE_THROTTLE_MS) {
+  const snapshot = getStateSnapshot(baseCode);
+  if (!snapshot || !snapshot.checkedAt) return false;
+  return (Date.now() - snapshot.checkedAt) < ttlMs;
+}
+
+// 1. マスタキャッシュ (localStorage) - CASE A: 全品保持 (allItems)
+function getMasterCache() {
+  try {
+    const raw = localStorage.getItem("scrap_cache_master");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    // allItems または items を確実に保持
+    if (parsed && !parsed.allItems && parsed.items) {
+      parsed.allItems = parsed.items;
+    }
+    return parsed;
+  } catch (e) {
+    return null;
+  }
+}
+
 function saveMasterCache(masterData, masterRevision = 1) {
   try {
+    const allItems = masterData.allItems || masterData.items || [];
     const payload = {
       masterRevision: masterRevision,
       bases: masterData.bases || [],
-      items: masterData.items || [],
+      allItems: allItems,
+      items: allItems, // 互換性のためのエイリアス
       fixedItems: masterData.fixedItems || [],
       categories: masterData.categories || [],
       fetchedAt: Date.now()
@@ -209,6 +259,8 @@ function invalidateHistoryCache(baseCode) {
   try {
     if (baseCode) {
       sessionStorage.removeItem(`scrap_cache_history_${baseCode}`);
+      sessionStorage.removeItem(`scrap_state_snapshot_${baseCode}`);
+      sessionStorage.removeItem(`scrap_state_checked_${baseCode}`);
     } else {
       // 全履歴キャッシュ削除
       for (let i = sessionStorage.length - 1; i >= 0; i--) {
@@ -249,6 +301,10 @@ function saveSummaryCache(baseCode, fromDate, toDate, data, summaryRevision = 1)
 
 function invalidateSummaryCache(baseCode) {
   try {
+    if (baseCode) {
+      sessionStorage.removeItem(`scrap_state_snapshot_${baseCode}`);
+      sessionStorage.removeItem(`scrap_state_checked_${baseCode}`);
+    }
     const prefix = baseCode ? `scrap_cache_summary_${baseCode}_` : "scrap_cache_summary_";
     for (let i = sessionStorage.length - 1; i >= 0; i--) {
       const k = sessionStorage.key(i);
@@ -262,6 +318,14 @@ function invalidateSummaryCache(baseCode) {
 function invalidateAllCaches() {
   invalidateHistoryCache();
   invalidateSummaryCache();
+  try {
+    for (let i = sessionStorage.length - 1; i >= 0; i--) {
+      const k = sessionStorage.key(i);
+      if (k && (k.startsWith("scrap_state_snapshot_") || k.startsWith("scrap_state_checked_"))) {
+        sessionStorage.removeItem(k);
+      }
+    }
+  } catch (e) {}
 }
 
 if (typeof module !== "undefined" && module.exports) {
@@ -269,6 +333,8 @@ if (typeof module !== "undefined" && module.exports) {
     getUserSettings,
     saveUserSettings,
     clearUserSettings,
+    getSelectedMaterialCategories,
+    saveSelectedMaterialCategories,
     getPreviousInput,
     savePreviousInput,
     getLocalDraft,
@@ -281,6 +347,9 @@ if (typeof module !== "undefined" && module.exports) {
     getLastStateCheckTime,
     setLastStateCheckTime,
     isStateCheckThrottled,
+    getStateSnapshot,
+    saveStateSnapshot,
+    isStateSnapshotFresh,
     getMasterCache,
     saveMasterCache,
     invalidateMasterCache,
@@ -298,6 +367,8 @@ if (typeof window !== "undefined") {
     getUserSettings,
     saveUserSettings,
     clearUserSettings,
+    getSelectedMaterialCategories,
+    saveSelectedMaterialCategories,
     getPreviousInput,
     savePreviousInput,
     getLocalDraft,
@@ -310,6 +381,9 @@ if (typeof window !== "undefined") {
     getLastStateCheckTime,
     setLastStateCheckTime,
     isStateCheckThrottled,
+    getStateSnapshot,
+    saveStateSnapshot,
+    isStateSnapshotFresh,
     getMasterCache,
     saveMasterCache,
     invalidateMasterCache,
