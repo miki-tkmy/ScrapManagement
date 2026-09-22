@@ -32,16 +32,22 @@
       <div class="card">
         <h2 class="card-title">1. 拠点・担当・引取業者情報</h2>
         <div class="form-grid">
-          <!-- BaseCode 入力 (社員番号設定時は内部値保持) -->
-          <div class="form-group" id="base-code-group">
+          <!-- BaseCode 入力 (内部値保持用) -->
+          <div class="form-group" id="base-code-group" style="display:none;">
             <label class="form-label" for="base-code-input">拠点コード <span style="color:var(--color-danger)">*</span></label>
             <input type="text" id="base-code-input" class="form-input" placeholder="例: B01, B19" autocomplete="off" autocapitalize="characters" required>
             <div id="base-code-autocomplete" class="autocomplete-box"></div>
           </div>
-          <!-- BaseName (社員番号照会から自動解決・必須・編集不可) -->
-          <div class="form-group">
-            <label class="form-label" for="base-name-display">拠点名 <span style="color:var(--color-danger)">*</span></label>
-            <input type="text" id="base-name-display" class="form-input input-readonly" placeholder="社員番号から自動取得" readonly required>
+          <!-- Working Base (入力拠点) 表示 & 変更UI -->
+          <div class="form-group" id="working-base-group">
+            <label class="form-label" for="base-name-display">入力拠点 <span style="color:var(--color-danger)">*</span></label>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <input type="text" id="base-name-display" class="form-input input-readonly" placeholder="拠点を選択してください" readonly required style="flex:1;">
+              <button type="button" id="btn-change-working-base" class="btn btn-secondary" style="padding:6px 14px; min-height:40px; font-weight:600; white-space:nowrap;">変更</button>
+            </div>
+            <div id="working-base-warning" style="display:none; margin-top:6px; font-size:0.8rem; color:#b45309; background:#fef3c7; padding:4px 8px; border-radius:4px; border:1px solid #fcd34d;">
+              ⚠️ 所属Base（<span id="assigned-base-name-hint">--</span>）とは異なるBaseを入力中
+            </div>
           </div>
           <!-- 担当者名 (株式会社タカミヤ側) -->
           <div class="form-group">
@@ -391,6 +397,25 @@
       <div class="modal-actions">
         <button type="button" class="btn btn-secondary" id="generic-modal-cancel" style="display:none;" onclick="closeGenericModal(false)">キャンセル</button>
         <button type="button" class="btn btn-primary" id="generic-modal-ok" onclick="closeGenericModal(true)">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Base 選択モーダル (全37拠点検索・選択) -->
+  <div id="base-selector-modal" class="modal-overlay" style="display:none;">
+    <div class="modal-content" style="max-width:480px; width:92%; max-height:85vh; display:flex; flex-direction:column; padding:1.25rem;">
+      <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
+        <h3 class="modal-title" style="margin:0; font-size:1.1rem; font-weight:700;">入力Base選択</h3>
+        <button type="button" id="btn-close-base-selector" class="btn btn-secondary" style="padding:4px 10px; min-height:32px; font-size:1rem; border-radius:4px;" onclick="closeBaseSelectorModal()">✕</button>
+      </div>
+      <div style="margin-bottom:0.75rem;">
+        <input type="text" id="base-selector-search-input" class="form-input" placeholder="コード・名称で検索 (例: B03, 大阪)" autocomplete="off">
+      </div>
+      <div id="base-selector-list" style="flex:1; overflow-y:auto; max-height:50vh; border:1px solid var(--color-border); border-radius:6px; padding:4px;">
+        <!-- Base items rendered dynamically -->
+      </div>
+      <div class="modal-actions" style="margin-top:0.75rem; justify-content:flex-end;">
+        <button type="button" class="btn btn-secondary" onclick="closeBaseSelectorModal()">キャンセル</button>
       </div>
     </div>
   </div>

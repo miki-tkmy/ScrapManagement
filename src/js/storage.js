@@ -12,15 +12,24 @@ const TERMINAL_STORAGE_KEYS = {
   USER_SETTINGS: "scrap_user_settings"
 };
 
-// 1. 利用者設定 (社員番号, 解決済み担当者名, 拠点コード, 拠点名, 選択資材カテゴリ, 選択定型品)
+const SESSION_STORAGE_KEYS = {
+  WORKING_BASE_CODE: "scrap_working_base_code",
+  WORKING_BASE_NAME: "scrap_working_base_name",
+  WORKING_BASE_EMP_NO: "scrap_working_base_emp_no"
+};
+
+// 1. 利用者設定 (社員番号, 解決済み担当者名, 所属拠点コード, 所属拠点名, 選択資材カテゴリ, 選択定型品)
 function getUserSettings() {
   try {
     const raw = localStorage.getItem(TERMINAL_STORAGE_KEYS.USER_SETTINGS);
     return raw ? JSON.parse(raw) : {
       employeeNo: "",
       resolvedEmployeeName: "",
+      employeeBaseCode: "",
+      employeeBaseName: "",
       resolvedBaseCode: "",
       resolvedBaseName: "",
+      baseSelectionRequired: false,
       selectedMaterialCategories: [],
       selectedFixedItemCodes: [],
       lastVerifiedAt: null
@@ -29,13 +38,60 @@ function getUserSettings() {
     return {
       employeeNo: "",
       resolvedEmployeeName: "",
+      employeeBaseCode: "",
+      employeeBaseName: "",
       resolvedBaseCode: "",
       resolvedBaseName: "",
+      baseSelectionRequired: false,
       selectedMaterialCategories: [],
       selectedFixedItemCodes: [],
       lastVerifiedAt: null
     };
   }
+}
+
+// 1.1 セッション Working Base 管理 (sessionStorage のみ使用、localStorage へ永続化禁止)
+function getSessionWorkingBase(empNo) {
+  try {
+    if (typeof sessionStorage === "undefined") return null;
+    const storedEmp = sessionStorage.getItem(SESSION_STORAGE_KEYS.WORKING_BASE_EMP_NO);
+    if (!storedEmp || (empNo && storedEmp !== String(empNo).trim().toUpperCase())) {
+      clearSessionWorkingBase();
+      return null;
+    }
+    const code = sessionStorage.getItem(SESSION_STORAGE_KEYS.WORKING_BASE_CODE);
+    const name = sessionStorage.getItem(SESSION_STORAGE_KEYS.WORKING_BASE_NAME);
+    if (code) {
+      return { baseCode: code, baseName: name || "" };
+    }
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function setSessionWorkingBase(baseCode, baseName, empNo) {
+  try {
+    if (typeof sessionStorage === "undefined") return;
+    if (baseCode) {
+      sessionStorage.setItem(SESSION_STORAGE_KEYS.WORKING_BASE_CODE, String(baseCode).trim());
+      sessionStorage.setItem(SESSION_STORAGE_KEYS.WORKING_BASE_NAME, String(baseName || "").trim());
+      if (empNo) {
+        sessionStorage.setItem(SESSION_STORAGE_KEYS.WORKING_BASE_EMP_NO, String(empNo).trim().toUpperCase());
+      }
+    } else {
+      clearSessionWorkingBase();
+    }
+  } catch (e) {}
+}
+
+function clearSessionWorkingBase() {
+  try {
+    if (typeof sessionStorage === "undefined") return;
+    sessionStorage.removeItem(SESSION_STORAGE_KEYS.WORKING_BASE_CODE);
+    sessionStorage.removeItem(SESSION_STORAGE_KEYS.WORKING_BASE_NAME);
+    sessionStorage.removeItem(SESSION_STORAGE_KEYS.WORKING_BASE_EMP_NO);
+  } catch (e) {}
 }
 
 function saveUserSettings(settings) {
@@ -411,7 +467,10 @@ if (typeof module !== "undefined" && module.exports) {
     saveSummaryCache,
     updateSummaryCountInCache,
     invalidateSummaryCache,
-    invalidateAllCaches
+    invalidateAllCaches,
+    getSessionWorkingBase,
+    setSessionWorkingBase,
+    clearSessionWorkingBase
   };
 }
 if (typeof window !== "undefined") {
@@ -419,6 +478,9 @@ if (typeof window !== "undefined") {
     getUserSettings,
     saveUserSettings,
     clearUserSettings,
+    getSessionWorkingBase,
+    setSessionWorkingBase,
+    clearSessionWorkingBase,
     getSelectedMaterialCategories,
     saveSelectedMaterialCategories,
     getPreviousInput,

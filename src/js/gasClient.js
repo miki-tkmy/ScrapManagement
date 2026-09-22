@@ -30,7 +30,8 @@ class GasClient {
       "E00001": { empNo: "E00001", employeeName: "テスト担当A", baseCode: "B03", baseName: "大阪第一Base", active: true },
       "E00002": { empNo: "E00002", employeeName: "テスト担当B", baseCode: "B03", baseName: "大阪第一Base", active: true },
       "E00003": { empNo: "E00003", employeeName: "テスト担当C", baseCode: "B02", baseName: "東京第一Base", active: true },
-      "E00004": { empNo: "E00004", employeeName: "休職担当", baseCode: "B01", baseName: "仙台Base", active: false }
+      "E00004": { empNo: "E00004", employeeName: "休職担当", baseCode: "B01", baseName: "仙台Base", active: false },
+      "E00005": { empNo: "E00005", employeeName: "本部担当D", baseCode: "", baseName: "", active: true }
     };
 
     // MOCK 用リビジョン管理 (V3.5 / V3.8)
@@ -251,10 +252,21 @@ class GasClient {
       if (!emp.active) {
         return { success: false, error: "EMPLOYEE_INACTIVE", message: "社員番号が無効または休職中です。" };
       }
+      const bCode = emp.baseCode ? String(emp.baseCode).trim() : "";
+      const bName = emp.baseName ? String(emp.baseName).trim() : "";
+      const baseSelectionRequired = (!bCode);
+
       return {
         success: true,
         mode: "MOCK",
-        employee: Object.assign({}, emp, { updatedAt: new Date().toISOString() })
+        employee: Object.assign({}, emp, {
+          employeeBaseCode: bCode,
+          employeeBaseName: bName,
+          baseCode: bCode,
+          baseName: bName,
+          baseSelectionRequired: baseSelectionRequired,
+          updatedAt: new Date().toISOString()
+        })
       };
     }
 

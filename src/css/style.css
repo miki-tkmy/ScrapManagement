@@ -1191,3 +1191,32 @@ body.modal-open {
   border-top: 1px solid var(--color-border);
   padding-top: 0.4rem;
 }
+
+/* Base Selector Modal Styles (V3.9) */
+.base-selector-item {
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-border);
+  cursor: pointer;
+  min-height: 44px;
+  border-radius: 4px;
+  transition: background-color 0.15s ease;
+}
+.base-selector-item:hover, .base-selector-item:active {
+  background-color: var(--color-surface-subtle);
+}
+.base-selector-item.selected {
+  background-color: var(--color-tertiary-light);
+}
+.base-selector-item-code {
+  font-weight: 700;
+  color: var(--color-secondary);
+  font-size: 0.95rem;
+  min-width: 52px;
+}
+.base-selector-item-name {
+  font-size: 0.95rem;
+  color: var(--color-text-main);
+  flex: 1;
+}

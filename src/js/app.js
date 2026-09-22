@@ -26,9 +26,15 @@ let centralHistorySlips = [];
 let centralDraftSlips = [];
 let currentSummaryData = null;
 
-// 社員設定 (解決済み情報)
+// 社員設定 (所属Base vs 入力Base 分離)
 let resolvedEmployeeNo = "";
 let resolvedEmployeeName = "";
+let assignedEmployeeBaseCode = "";
+let assignedEmployeeBaseName = "";
+let workingBaseCode = "";
+let workingBaseName = "";
+
+// 後方互換性エイリアス (常に workingBaseCode / workingBaseName に同期)
 let resolvedBaseCode = "";
 let resolvedBaseName = "";
 
@@ -38,6 +44,7 @@ if (typeof document !== "undefined") {
     initCompletionState(); // Section 8: Priority - open completion modal immediately before background sync
     initGasClient();
     initBaseCodeHandlers();
+    initBaseSelectorModal();
     initItemCodeHandlers();
     initFixedItemsList();
     initVendorSignaturePad();
@@ -155,14 +162,25 @@ function updateNetworkStatus() {
   }
 }
 
-// 2. 利用者設定 (社員番号・担当者・拠点) の初期化 & フォームロック
+// 2. 利用者設定 (社員番号・担当者・所属拠点) の初期化 & フォームロック
 function initUserSettings() {
   const settings = TerminalStorage.getUserSettings();
-  if (settings.employeeNo && settings.resolvedEmployeeName && settings.resolvedBaseCode) {
+  if (settings.employeeNo && settings.resolvedEmployeeName) {
     resolvedEmployeeNo = settings.employeeNo;
     resolvedEmployeeName = settings.resolvedEmployeeName;
-    resolvedBaseCode = settings.resolvedBaseCode;
-    resolvedBaseName = settings.resolvedBaseName;
+    assignedEmployeeBaseCode = settings.employeeBaseCode || settings.resolvedBaseCode || "";
+    assignedEmployeeBaseName = settings.employeeBaseName || settings.resolvedBaseName || "";
+
+    // セッション中に明示変更された Working Base があれば優先
+    const sessionBase = TerminalStorage.getSessionWorkingBase(resolvedEmployeeNo);
+    if (sessionBase && sessionBase.baseCode) {
+      updateWorkingBaseState(sessionBase.baseCode, sessionBase.baseName, false);
+    } else if (assignedEmployeeBaseCode) {
+      updateWorkingBaseState(assignedEmployeeBaseCode, assignedEmployeeBaseName, false);
+    } else {
+      // 未所属社員 (本部・統括) でセッション未選択の場合 -> 未選択
+      updateWorkingBaseState("", "", false);
+    }
 
     // 設定画面へ反映
     const empInput = document.getElementById("setting-employee-no");
@@ -172,20 +190,21 @@ function initUserSettings() {
 
     if (empInput) empInput.value = resolvedEmployeeNo;
     if (nameInput) nameInput.value = resolvedEmployeeName;
-    if (baseInput) baseInput.value = resolvedBaseName;
+    if (baseInput) baseInput.value = assignedEmployeeBaseName || "(未所属・入力時選択)";
     if (statusEl) {
-      statusEl.innerHTML = `<span style="color:var(--color-success); font-weight:bold;">✓ 社員登録済み (${resolvedEmployeeName} / ${resolvedBaseName})</span>`;
+      statusEl.innerHTML = `<span style="color:var(--color-success); font-weight:bold;">✓ 社員登録済み (${resolvedEmployeeName} / ${assignedEmployeeBaseName || "未所属"})</span>`;
     }
 
-    // 伝票入力画面のロック
+    // 伝票入力画面のロック & UI反映
     applyEmployeeLockToForm();
     hideEmployeeUnconfiguredBanner();
   } else {
-    // 社員未設定状態を維持 (B01などの勝手なフォールバック禁止)
+    // 社員未設定状態を維持
     resolvedEmployeeNo = "";
     resolvedEmployeeName = "";
-    resolvedBaseCode = "";
-    resolvedBaseName = "";
+    assignedEmployeeBaseCode = "";
+    assignedEmployeeBaseName = "";
+    updateWorkingBaseState("", "", false);
     showEmployeeUnconfiguredBanner();
   }
 }
@@ -282,20 +301,234 @@ function initCompletionState() {
 }
 
 function applyEmployeeLockToForm() {
-  const baseCodeInput = document.getElementById("base-code-input");
-  const baseNameDisplay = document.getElementById("base-name-display");
   const staffNameInput = document.getElementById("staff-name-input");
   const baseCodeGroup = document.getElementById("base-code-group");
 
-  if (baseCodeInput) baseCodeInput.value = resolvedBaseCode;
-  if (baseNameDisplay) baseNameDisplay.value = resolvedBaseName;
   if (staffNameInput) {
     staffNameInput.value = resolvedEmployeeName;
     staffNameInput.readOnly = true;
     staffNameInput.classList.add("input-readonly");
   }
   if (baseCodeGroup) {
-    baseCodeGroup.style.display = resolvedBaseCode ? "none" : "block";
+    baseCodeGroup.style.display = "none";
+  }
+
+  renderWorkingBaseUi();
+}
+
+// Working Base 状態更新 & 同期ヘルパー
+function updateWorkingBaseState(baseCode, baseName, persistSession = true) {
+  workingBaseCode = baseCode ? String(baseCode).trim() : "";
+  workingBaseName = baseName ? String(baseName).trim() : "";
+  resolvedBaseCode = workingBaseCode;
+  resolvedBaseName = workingBaseName;
+
+  if (persistSession && resolvedEmployeeNo) {
+    TerminalStorage.setSessionWorkingBase(workingBaseCode, workingBaseName, resolvedEmployeeNo);
+  }
+
+  renderWorkingBaseUi();
+}
+
+function renderWorkingBaseUi() {
+  const baseNameDisplay = document.getElementById("base-name-display");
+  const baseCodeInput = document.getElementById("base-code-input");
+  const btnChange = document.getElementById("btn-change-working-base");
+  const warningEl = document.getElementById("working-base-warning");
+  const hintEl = document.getElementById("assigned-base-name-hint");
+
+  if (baseCodeInput) baseCodeInput.value = workingBaseCode;
+
+  if (baseNameDisplay) {
+    if (workingBaseName) {
+      baseNameDisplay.value = workingBaseName;
+      if (baseNameDisplay.style) baseNameDisplay.style.color = "var(--color-text)";
+    } else {
+      baseNameDisplay.value = "";
+      baseNameDisplay.placeholder = "拠点を選択してください";
+    }
+  }
+
+  if (btnChange) {
+    btnChange.textContent = workingBaseCode ? "変更" : "選択";
+  }
+
+  if (warningEl && hintEl) {
+    if (workingBaseCode && assignedEmployeeBaseCode && workingBaseCode !== assignedEmployeeBaseCode) {
+      hintEl.textContent = assignedEmployeeBaseName || assignedEmployeeBaseCode;
+      if (warningEl.style) warningEl.style.display = "block";
+    } else {
+      if (warningEl.style) warningEl.style.display = "none";
+    }
+  }
+}
+
+// 取引中データ存在チェック (Base変更時のクリアガード用)
+function hasActiveTransactionData() {
+  const vendorInput = document.getElementById("vendor-name-input");
+  const hasVendor = Boolean(vendorInput && vendorInput.value.trim());
+  const hasCodeItems = Array.isArray(currentCodeItems) && currentCodeItems.length > 0;
+  const hasFixedItems = typeof collectFixedItems === "function" ? collectFixedItems().length > 0 : false;
+  const hasOtherItems = Array.isArray(currentOtherItems) && currentOtherItems.length > 0;
+  const hasSignature = Boolean(confirmedSignatureData || (vendorPad && !vendorPad.isEmpty()));
+  const hasPendingFinalize = Boolean(pendingFinalizeSlip);
+  return Boolean(hasVendor || hasCodeItems || hasFixedItems || hasOtherItems || hasSignature || hasPendingFinalize);
+}
+
+// 取引単位データクリア (社員設定・Working Base は維持)
+function clearTransactionData() {
+  const vendorInput = document.getElementById("vendor-name-input");
+  if (vendorInput) vendorInput.value = "";
+
+  currentCodeItems = [];
+  currentOtherItems = [];
+  if (typeof renderCodeItemsTable === "function") renderCodeItemsTable();
+  if (typeof renderOtherItemsTable === "function") renderOtherItemsTable();
+  if (typeof updateWeightDisplay === "function") updateWeightDisplay();
+
+  // 定型品 input クリア
+  const allFixed = (window.ACTIVE_FIXED_ITEMS && window.ACTIVE_FIXED_ITEMS.length > 0)
+    ? window.ACTIVE_FIXED_ITEMS
+    : (window.TEST_FIXTURE_FIXED_ITEMS || []);
+  allFixed.forEach(fi => {
+    const input = document.getElementById(`fixed-qty-${fi.fixedItemId}`);
+    if (input) input.value = "";
+  });
+
+  confirmedSignatureData = null;
+  if (vendorPad) vendorPad.clear();
+  if (typeof updateSignatureDisplay === "function") updateSignatureDisplay();
+
+  const notesInput = document.getElementById("notes-input");
+  if (notesInput) notesInput.value = "";
+
+  TerminalStorage.clearLocalDraft();
+  pendingFinalizeSlip = null;
+}
+
+// Working Base 変更適用
+function applyWorkingBaseChange(newBaseCode, newBaseName) {
+  if (!newBaseCode) return;
+  updateWorkingBaseState(newBaseCode, newBaseName, true);
+
+  // 選択拠点に応じて履歴・集計キャッシュを無効化
+  TerminalStorage.invalidateHistoryCache(newBaseCode);
+  TerminalStorage.invalidateSummaryCache(newBaseCode);
+
+  closeBaseSelectorModal();
+
+  // 履歴・集計タブが開かれている場合は更新
+  const activeTab = document.querySelector(".nav-item.active");
+  if (activeTab && typeof activeTab.getAttribute === "function") {
+    const tabId = activeTab.getAttribute("data-tab");
+    if (tabId === "history" && typeof renderHistoryTable === "function") renderHistoryTable();
+    if (tabId === "summary" && typeof renderSummaryView === "function") renderSummaryView();
+  }
+}
+
+// Working Base 変更要求 (アクティブ取引ガード付き)
+function requestWorkingBaseChange(selectedBaseCode, selectedBaseName) {
+  if (!selectedBaseCode) return;
+  if (selectedBaseCode === workingBaseCode) {
+    closeBaseSelectorModal();
+    return;
+  }
+
+  if (hasActiveTransactionData()) {
+    showAppModal({
+      title: "入力Base変更の確認",
+      message: "入力Baseを変更すると、現在入力中の伝票内容をクリアします。",
+      okText: "変更してクリア",
+      cancelText: "戻る",
+      onOk: () => {
+        clearTransactionData();
+        applyWorkingBaseChange(selectedBaseCode, selectedBaseName);
+      },
+      onCancel: () => {
+        // キャンセル時は変更せず現在の入力内容を保持
+      }
+    });
+  } else {
+    applyWorkingBaseChange(selectedBaseCode, selectedBaseName);
+  }
+}
+
+// Base 選択モーダル UI
+function openBaseSelectorModal() {
+  const modal = document.getElementById("base-selector-modal");
+  if (!modal) return;
+  modal.style.display = "flex";
+  document.body.classList.add("modal-open");
+
+  const searchInput = document.getElementById("base-selector-search-input");
+  if (searchInput) {
+    searchInput.value = "";
+    searchInput.focus();
+  }
+  renderBaseSelectorList("");
+}
+
+function closeBaseSelectorModal() {
+  const modal = document.getElementById("base-selector-modal");
+  if (!modal) return;
+  modal.style.display = "none";
+  document.body.classList.remove("modal-open");
+}
+
+function renderBaseSelectorList(query = "") {
+  const listEl = document.getElementById("base-selector-list");
+  if (!listEl) return;
+  listEl.innerHTML = "";
+
+  const bases = (typeof BaseService !== "undefined" && BaseService.searchBases)
+    ? BaseService.searchBases(query)
+    : ((typeof BaseService !== "undefined" && BaseService.getEffectiveBaseList)
+      ? BaseService.getEffectiveBaseList()
+      : (typeof window !== "undefined" && window.TEST_FIXTURE_BASES ? window.TEST_FIXTURE_BASES : []));
+
+  if (!bases || bases.length === 0) {
+    listEl.innerHTML = `<div style="padding: 1rem; text-align: center; color: var(--color-text-muted);">該当する拠点が見つかりません</div>`;
+    return;
+  }
+
+  bases.forEach(b => {
+    const item = document.createElement("div");
+    item.className = "base-selector-item" + (b.baseCode === workingBaseCode ? " selected" : "");
+    item.innerHTML = `
+      <span class="base-selector-item-code">${b.baseCode}</span>
+      <span class="base-selector-item-name">${b.baseName}</span>
+      ${b.baseCode === workingBaseCode ? '<span style="color:var(--color-primary); font-weight:700; margin-left:auto;">✓</span>' : ''}
+    `;
+    item.addEventListener("click", () => {
+      requestWorkingBaseChange(b.baseCode, b.baseName);
+    });
+    listEl.appendChild(item);
+  });
+}
+
+function initBaseSelectorModal() {
+  const btnChange = document.getElementById("btn-change-working-base");
+  if (btnChange) {
+    btnChange.addEventListener("click", () => {
+      openBaseSelectorModal();
+    });
+  }
+
+  const searchInput = document.getElementById("base-selector-search-input");
+  if (searchInput) {
+    searchInput.addEventListener("input", (e) => {
+      renderBaseSelectorList(e.target.value);
+    });
+  }
+
+  const btnClose = document.getElementById("btn-close-base-selector");
+  if (btnClose) {
+    btnClose.addEventListener("click", closeBaseSelectorModal);
+  }
+
+  const btnCancel = document.getElementById("btn-cancel-base-selector");
+  if (btnCancel) {
+    btnCancel.addEventListener("click", closeBaseSelectorModal);
   }
 }
 
@@ -335,10 +568,12 @@ function verifyAndSaveEmployee() {
   gasClient.lookupEmployee(empNo).then(res => {
     if (res && res.success && res.employee) {
       const emp = res.employee;
+      const bCode = emp.employeeBaseCode !== undefined ? String(emp.employeeBaseCode).trim() : (emp.baseCode ? String(emp.baseCode).trim() : "");
+      const bName = emp.employeeBaseName !== undefined ? String(emp.employeeBaseName).trim() : (emp.baseName ? String(emp.baseName).trim() : "");
 
-      // BaseCode または BaseName の不整合を検証 (Fail-Closed)
-      if (!emp.baseCode || !String(emp.baseCode).trim() || !emp.baseName || !String(emp.baseName).trim()) {
-        const mismatchMsg = "社員情報の拠点データに不整合があります (BaseCode または BaseName が未設定)。";
+      // BaseCode のみ、または BaseName のみの不完全データは Fail-Closed
+      if ((bCode && !bName) || (!bCode && bName)) {
+        const mismatchMsg = "社員情報の拠点データに不整合があります (BaseCode または BaseName の片方のみ設定)。";
         if (statusEl) statusEl.innerHTML = `<span style="color:var(--color-danger); font-weight:bold;">✕ ${mismatchMsg}</span>`;
         showAppModal({ title: "社員情報不整合", message: mismatchMsg });
         return;
@@ -346,24 +581,37 @@ function verifyAndSaveEmployee() {
 
       resolvedEmployeeNo = emp.empNo;
       resolvedEmployeeName = emp.employeeName;
-      resolvedBaseCode = emp.baseCode;
-      resolvedBaseName = emp.baseName;
+      assignedEmployeeBaseCode = bCode;
+      assignedEmployeeBaseName = bName;
+
+      // 社員変更に伴い前社員のセッション Working Base を破棄
+      TerminalStorage.clearSessionWorkingBase();
+
+      if (assignedEmployeeBaseCode) {
+        updateWorkingBaseState(assignedEmployeeBaseCode, assignedEmployeeBaseName, false);
+      } else {
+        // 未所属社員 (本部・統括) は Working Base 未選択で開始
+        updateWorkingBaseState("", "", false);
+      }
 
       const nameInput = document.getElementById("setting-employee-name");
       const baseInput = document.getElementById("setting-base-name");
       if (nameInput) nameInput.value = resolvedEmployeeName;
-      if (baseInput) baseInput.value = resolvedBaseName;
+      if (baseInput) baseInput.value = assignedEmployeeBaseName || "(未所属・入力時選択)";
 
       if (statusEl) {
-        statusEl.innerHTML = `<span style="color:var(--color-success); font-weight:bold;">✓ 確認完了: ${resolvedEmployeeName} (${resolvedBaseName}) として登録しました。</span>`;
+        statusEl.innerHTML = `<span style="color:var(--color-success); font-weight:bold;">✓ 確認完了: ${resolvedEmployeeName} (${assignedEmployeeBaseName || "未所属"}) として登録しました。</span>`;
       }
 
       // 端末設定保存
       TerminalStorage.saveUserSettings({
         employeeNo: resolvedEmployeeNo,
         resolvedEmployeeName: resolvedEmployeeName,
-        resolvedBaseCode: resolvedBaseCode,
-        resolvedBaseName: resolvedBaseName,
+        employeeBaseCode: assignedEmployeeBaseCode,
+        employeeBaseName: assignedEmployeeBaseName,
+        resolvedBaseCode: assignedEmployeeBaseCode,
+        resolvedBaseName: assignedEmployeeBaseName,
+        baseSelectionRequired: (!assignedEmployeeBaseCode),
         lastVerifiedAt: new Date().toISOString()
       });
 
@@ -374,9 +622,13 @@ function verifyAndSaveEmployee() {
       applyEmployeeLockToForm();
       hideEmployeeUnconfiguredBanner();
 
+      const modalMsg = assignedEmployeeBaseCode
+        ? `社員番号: ${resolvedEmployeeNo}\n担当者: ${resolvedEmployeeName}\n所属拠点: ${assignedEmployeeBaseName}\nとして設定しました。`
+        : `社員番号: ${resolvedEmployeeNo}\n担当者: ${resolvedEmployeeName}\n所属拠点: なし（本部・統括社員）\nとして設定しました。\n伝票入力時に入力対象Baseを選択してください。`;
+
       showAppModal({
         title: "設定完了",
-        message: `社員番号 ${resolvedEmployeeNo}\n担当者: ${resolvedEmployeeName}\n所属拠点: ${resolvedBaseName}\nとして設定しました。`
+        message: modalMsg
       });
     } else {
       const msg = res ? (res.message || res.error) : "社員番号の照会に失敗しました。";
@@ -985,7 +1237,7 @@ function closeGenericModal(result) {
 
 // 11. 伝票完了処理 (確定 & 完了画面 & フォーム初期化)
 function handleFinalizeButton() {
-  if (!resolvedBaseCode) {
+  if (!resolvedEmployeeNo) {
     showAppModal({
       title: "社員番号未設定",
       message: "伝票を完了するには、まず「設定」タブで社員番号を登録してください。"
@@ -993,10 +1245,10 @@ function handleFinalizeButton() {
     return;
   }
 
-  if (!resolvedBaseName || !resolvedBaseName.trim()) {
+  if (!workingBaseCode || !workingBaseName || !workingBaseName.trim()) {
     showAppModal({
-      title: "拠点名未設定",
-      message: "拠点名を確認してください。設定タブで社員番号を登録してください。"
+      title: "入力Base未選択",
+      message: "入力Baseを選択してください。"
     });
     return;
   }
@@ -1070,10 +1322,18 @@ function executeFinalize(isWithoutSignature, signatureDataUrl = null) {
   const t0 = (typeof performance !== "undefined" && performance.timeOrigin) ? (performance.timeOrigin + performance.now()) : Date.now();
   closeNoSignatureModal();
 
-  if (!resolvedBaseCode) {
+  if (!resolvedEmployeeNo) {
     showAppModal({
       title: "社員番号未設定",
       message: "伝票を完了するには、まず「設定」タブで社員番号を登録してください。"
+    });
+    return;
+  }
+
+  if (!workingBaseCode || !workingBaseName || !workingBaseName.trim()) {
+    showAppModal({
+      title: "入力Base未選択",
+      message: "入力Baseを選択してください。"
     });
     return;
   }
@@ -1350,7 +1610,7 @@ function getJstDateString() {
 }
 
 function saveTemporaryDraft() {
-  if (!resolvedBaseCode) {
+  if (!resolvedEmployeeNo) {
     showAppModal({
       title: "社員番号未設定",
       message: "伝票を一時保存するには、まず「設定」タブで社員番号を登録してください。"
@@ -1358,10 +1618,10 @@ function saveTemporaryDraft() {
     return;
   }
 
-  if (!resolvedBaseName || !resolvedBaseName.trim()) {
+  if (!workingBaseCode || !workingBaseName || !workingBaseName.trim()) {
     showAppModal({
-      title: "拠点名未設定",
-      message: "拠点名を確認してください。設定タブで社員番号を登録してください。"
+      title: "入力Base未選択",
+      message: "入力Baseを選択してください。"
     });
     return;
   }
@@ -2355,11 +2615,18 @@ function saveFixedItemPreferences() {
 
 // 18. タブ切り替え (Lazy Loading & 社員設定ガード対応)
 function switchTab(tabName) {
-  if (tabName !== "settings" && (!resolvedEmployeeNo || !resolvedBaseCode)) {
-    showAppModal({
-      title: "社員番号未設定",
-      message: "設定タブで社員番号を登録してください。"
-    });
+  if (tabName !== "settings" && (!resolvedEmployeeNo || !workingBaseCode)) {
+    if (!resolvedEmployeeNo) {
+      showAppModal({
+        title: "社員番号未設定",
+        message: "設定タブで社員番号を登録してください。"
+      });
+    } else {
+      showAppModal({
+        title: "入力Base未選択",
+        message: "入力Baseを選択してください。"
+      });
+    }
   }
 
   ["create", "history", "summary", "settings"].forEach(t => {
@@ -2444,9 +2711,22 @@ if (typeof module !== "undefined" && module.exports) {
     getResolvedEmployeeInfo: () => ({
       resolvedEmployeeNo,
       resolvedEmployeeName,
+      assignedEmployeeBaseCode,
+      assignedEmployeeBaseName,
+      workingBaseCode,
+      workingBaseName,
       resolvedBaseCode,
       resolvedBaseName
-    })
+    }),
+    updateWorkingBaseState,
+    requestWorkingBaseChange,
+    applyWorkingBaseChange,
+    hasActiveTransactionData,
+    clearTransactionData,
+    openBaseSelectorModal,
+    closeBaseSelectorModal,
+    renderBaseSelectorList,
+    renderWorkingBaseUi
   };
 }
 
