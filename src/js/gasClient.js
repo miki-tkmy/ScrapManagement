@@ -33,10 +33,12 @@ class GasClient {
       "E00004": { empNo: "E00004", employeeName: "休職担当", baseCode: "B01", baseName: "仙台Base", active: false }
     };
 
-    // MOCK 用リビジョン管理 (V3.5)
+    // MOCK 用リビジョン管理 (V3.5 / V3.8)
     this._mockRevisions = {
       masterRevision: 1,
       historyRevisions: {},
+      slipCountRevisions: {},
+      materialSummaryRevisions: {},
       summaryRevisions: {}
     };
   }
@@ -126,20 +128,23 @@ class GasClient {
     }
   }
 
-  // 2.5. リビジョン状態取得 (GET action=state) - V3.5 軽量API
+  // 2.5. リビジョン状態取得 (GET action=state) - V3.5 / V3.8 軽量API
   async fetchState(baseCode = "GLOBAL") {
     if (this.isMockMode) {
       if (!this._mockRevisions) {
-        this._mockRevisions = { masterRevision: 1, historyRevisions: {}, summaryRevisions: {} };
+        this._mockRevisions = { masterRevision: 1, historyRevisions: {}, slipCountRevisions: {}, materialSummaryRevisions: {}, summaryRevisions: {} };
       }
       const b = baseCode || "GLOBAL";
+      const matRev = this._mockRevisions.materialSummaryRevisions[b] || this._mockRevisions.summaryRevisions[b] || 1;
       return {
         success: true,
         mode: "MOCK",
         baseCode: b,
         masterRevision: this._mockRevisions.masterRevision || 1,
         historyRevision: this._mockRevisions.historyRevisions[b] || 1,
-        summaryRevision: this._mockRevisions.summaryRevisions[b] || 1,
+        slipCountRevision: this._mockRevisions.slipCountRevisions[b] || 1,
+        materialSummaryRevision: matRev,
+        summaryRevision: matRev,
         serverTime: new Date().toISOString()
       };
     }
@@ -393,6 +398,55 @@ class GasClient {
     }
   }
 
+  // 6.5. 軽量集計カウント取得 (GET action=summary-count&baseCode=...&fromDate=...&toDate=...)
+  async fetchSummaryCount(params = {}) {
+    const baseCode = params.baseCode || "";
+    if (!baseCode) {
+      return { success: false, error: "MISSING_BASE_CODE" };
+    }
+    const fromDate = params.fromDate || "";
+    const toDate = params.toDate || "";
+
+    if (this.isMockMode) {
+      const hist = await this.fetchHistory({ baseCode, status: "FINAL", fromDate, toDate });
+      const slips = hist.slips || [];
+      const slipCountRev = (this._mockRevisions && this._mockRevisions.slipCountRevisions && this._mockRevisions.slipCountRevisions[baseCode]) || 1;
+      return {
+        success: true,
+        mode: "MOCK",
+        source: "MOCK_CENTRAL_DB",
+        baseCode: baseCode,
+        fromDate: fromDate,
+        toDate: toDate,
+        totalSlipsCount: slips.length,
+        slipCountRevision: slipCountRev
+      };
+    }
+
+    if (this.isUnconfiguredStaging) {
+      return { success: false, mode: "STAGING_UNCONFIGURED", error: "STAGING_ENDPOINT_NOT_CONFIGURED" };
+    }
+
+    try {
+      const q = `action=summary-count&baseCode=${encodeURIComponent(baseCode)}` +
+        (fromDate ? `&fromDate=${encodeURIComponent(fromDate)}` : "") +
+        (toDate ? `&toDate=${encodeURIComponent(toDate)}` : "");
+      const resp = await fetch(`${this.endpointUrl}?${q}`, { method: "GET" });
+      if (!resp.ok) throw new Error(`HTTP Error: ${resp.status}`);
+      const data = await resp.json();
+      data.mode = "GAS_STAGING";
+      return data;
+    } catch (e) {
+      console.error("[gasClient] fetchSummaryCount failed:", e);
+      return {
+        success: false,
+        mode: "GAS_STAGING",
+        error: "STAGING_BACKEND_UNAVAILABLE",
+        message: e.message
+      };
+    }
+  }
+
   // 7. 中央集計取得 (GET action=summary&baseCode=...&fromDate=...&toDate=...)
   async fetchSummary(params = {}) {
     const baseCode = params.baseCode || "";
@@ -409,12 +463,9 @@ class GasClient {
       let totalWeightKg = 0;
       let totalItemsCount = 0;
 
-      let totalEligibleSlipsCount = 0;
       slips.forEach(s => {
-        let slipHasEligibleCode = false;
         (s.codeItems || []).forEach(it => {
           if (it.quantityType === "NUMBER" && typeof it.quantityValue === "number" && it.quantityValue > 0) {
-            slipHasEligibleCode = true;
             totalItemsCount += it.quantityValue;
             const code = (it.itemCode ? String(it.itemCode).trim() : "") || "UNKNOWN";
             const detailName = it.itemName || "";
@@ -434,10 +485,10 @@ class GasClient {
             }
           }
         });
-        if (slipHasEligibleCode) {
-          totalEligibleSlipsCount++;
-        }
       });
+
+      const slipCountRev = (this._mockRevisions && this._mockRevisions.slipCountRevisions && this._mockRevisions.slipCountRevisions[baseCode]) || 1;
+      const matRev = (this._mockRevisions && this._mockRevisions.materialSummaryRevisions && this._mockRevisions.materialSummaryRevisions[baseCode]) || 1;
 
       return {
         success: true,
@@ -446,10 +497,13 @@ class GasClient {
         baseCode: baseCode,
         fromDate: fromDate,
         toDate: toDate,
-        totalSlipsCount: totalEligibleSlipsCount,
-        totalWeightKg: totalWeightKg,
+        totalSlipsCount: slips.length,
+        totalWeightKg: Math.round(totalWeightKg * 100) / 100,
         totalItemsCount: totalItemsCount,
-        items: Object.values(itemMap)
+        items: Object.values(itemMap),
+        slipCountRevision: slipCountRev,
+        materialSummaryRevision: matRev,
+        summaryRevision: matRev
       };
     }
 
@@ -678,12 +732,20 @@ class GasClient {
         return qtyType === "NUMBER" && Number.isFinite(qtyVal) && qtyVal > 0;
       });
 
+      if (!this._mockRevisions.historyRevisions) this._mockRevisions.historyRevisions = {};
       if (!this._mockRevisions.historyRevisions[baseCode]) this._mockRevisions.historyRevisions[baseCode] = 1;
       this._mockRevisions.historyRevisions[baseCode]++;
 
+      if (!this._mockRevisions.slipCountRevisions) this._mockRevisions.slipCountRevisions = {};
+      if (!this._mockRevisions.slipCountRevisions[baseCode]) this._mockRevisions.slipCountRevisions[baseCode] = 1;
+      this._mockRevisions.slipCountRevisions[baseCode]++;
+
+      if (!this._mockRevisions.materialSummaryRevisions) this._mockRevisions.materialSummaryRevisions = {};
       if (affectsSummary) {
-        if (!this._mockRevisions.summaryRevisions[baseCode]) this._mockRevisions.summaryRevisions[baseCode] = 1;
-        this._mockRevisions.summaryRevisions[baseCode]++;
+        if (!this._mockRevisions.materialSummaryRevisions[baseCode]) this._mockRevisions.materialSummaryRevisions[baseCode] = 1;
+        this._mockRevisions.materialSummaryRevisions[baseCode]++;
+        if (!this._mockRevisions.summaryRevisions) this._mockRevisions.summaryRevisions = {};
+        this._mockRevisions.summaryRevisions[baseCode] = this._mockRevisions.materialSummaryRevisions[baseCode];
       }
 
       return {
@@ -695,7 +757,10 @@ class GasClient {
         slipNo: slipNo,
         finalizedAt: confirmed.finalizedAt,
         createdBy: finalPayload.employeeNo || "",
-        affectsSummary: affectsSummary
+        affectsMaterialSummary: affectsSummary,
+        affectsSummary: affectsSummary,
+        slipCountRevision: this._mockRevisions.slipCountRevisions[baseCode],
+        materialSummaryRevision: this._mockRevisions.materialSummaryRevisions[baseCode] || 1
       };
     }
 

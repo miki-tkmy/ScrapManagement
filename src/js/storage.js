@@ -286,17 +286,58 @@ function getSummaryCache(baseCode, fromDate, toDate) {
   }
 }
 
-function saveSummaryCache(baseCode, fromDate, toDate, data, summaryRevision = 1) {
+function saveSummaryCache(baseCode, fromDate, toDate, data, revisions = {}) {
   if (!baseCode) return;
   const key = `scrap_cache_summary_${baseCode}_${fromDate || ""}_${toDate || ""}`;
   try {
+    const slipCountRev = typeof revisions === "object" && revisions !== null
+      ? (revisions.slipCountRevision || data.slipCountRevision || 1)
+      : 1;
+    const matSummRev = typeof revisions === "object" && revisions !== null
+      ? (revisions.materialSummaryRevision || revisions.summaryRevision || data.materialSummaryRevision || data.summaryRevision || 1)
+      : (typeof revisions === "number" ? revisions : 1);
+
     const payload = {
+      baseCode: baseCode,
+      fromDate: fromDate || "",
+      toDate: toDate || "",
+      slipCountRevision: slipCountRev,
+      totalSlipsCount: data.totalSlipsCount !== undefined ? data.totalSlipsCount : 0,
+      materialSummaryRevision: matSummRev,
+      totalItemsCount: data.totalItemsCount !== undefined ? data.totalItemsCount : 0,
+      totalWeightKg: data.totalWeightKg !== undefined ? data.totalWeightKg : 0,
+      items: data.items || [],
+      // 互換用データ構造
+      summaryRevision: matSummRev,
       data: data,
-      summaryRevision: summaryRevision,
       fetchedAt: Date.now()
     };
     sessionStorage.setItem(key, JSON.stringify(payload));
   } catch (e) {}
+}
+
+function updateSummaryCountInCache(baseCode, fromDate, toDate, count, slipCountRevision) {
+  if (!baseCode) return null;
+  const key = `scrap_cache_summary_${baseCode}_${fromDate || ""}_${toDate || ""}`;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const cached = JSON.parse(raw);
+    cached.totalSlipsCount = count;
+    if (slipCountRevision !== undefined) {
+      cached.slipCountRevision = slipCountRevision;
+    }
+    if (cached.data) {
+      cached.data.totalSlipsCount = count;
+      if (slipCountRevision !== undefined) {
+        cached.data.slipCountRevision = slipCountRevision;
+      }
+    }
+    sessionStorage.setItem(key, JSON.stringify(cached));
+    return cached;
+  } catch (e) {
+    return null;
+  }
 }
 
 function invalidateSummaryCache(baseCode) {
@@ -358,6 +399,7 @@ if (typeof module !== "undefined" && module.exports) {
     invalidateHistoryCache,
     getSummaryCache,
     saveSummaryCache,
+    updateSummaryCountInCache,
     invalidateSummaryCache,
     invalidateAllCaches
   };
@@ -392,6 +434,7 @@ if (typeof window !== "undefined") {
     invalidateHistoryCache,
     getSummaryCache,
     saveSummaryCache,
+    updateSummaryCountInCache,
     invalidateSummaryCache,
     invalidateAllCaches
   };

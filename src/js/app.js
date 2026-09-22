@@ -1068,8 +1068,18 @@ function executeFinalize(isWithoutSignature, signatureDataUrl = null) {
   const slipRecord = pendingFinalizeSlip;
   setFinalizeButtonsDisabled(true);
 
+  const tFinalizeStart = performance.now();
+
   // Central DB へ送信
   gasClient.finalizeSlip(slipRecord).then(res => {
+    const tFinalizeResponse = performance.now();
+    const finalizeRoundtripMs = Math.round(tFinalizeResponse - tFinalizeStart);
+    if (res && res.debugTimings) {
+      console.log(`[app.js] Finalize roundtrip: ${finalizeRoundtripMs}ms (server total: ${res.debugTimings.totalMs}ms, rev: ${res.debugTimings.revisionMs}ms, seq: ${res.debugTimings.sequenceMs}ms, det: ${res.debugTimings.detailWriteMs}ms)`);
+    } else {
+      console.log(`[app.js] Finalize roundtrip: ${finalizeRoundtripMs}ms`);
+    }
+
     setFinalizeButtonsDisabled(false);
     if (!res || !res.success) {
       const errMsg = res ? (res.error || res.message) : "Unknown error";
@@ -1094,13 +1104,25 @@ function executeFinalize(isWithoutSignature, signatureDataUrl = null) {
     // 履歴キャッシュは必ず無効化
     TerminalStorage.invalidateHistoryCache(resolvedBaseCode);
 
-    // 集計キャッシュは affectsSummary === true の場合のみ無効化 (Backendレスポンス優先、ローカル判定フォールバック)
-    const shouldInvalidateSummary = (res && typeof res.affectsSummary === "boolean")
-      ? res.affectsSummary
-      : checkIfSlipAffectsSummary(slipRecord);
+    // 集計キャッシュは affectsMaterialSummary === true の場合のみ無効化 (Backendレスポンス優先、ローカル判定フォールバック)
+    const shouldInvalidateMaterialSummary = (res && typeof res.affectsMaterialSummary === "boolean")
+      ? res.affectsMaterialSummary
+      : ((res && typeof res.affectsSummary === "boolean")
+        ? res.affectsSummary
+        : checkIfSlipAffectsSummary(slipRecord));
 
-    if (shouldInvalidateSummary) {
+    if (shouldInvalidateMaterialSummary) {
       TerminalStorage.invalidateSummaryCache(resolvedBaseCode);
+    } else {
+      // 資材に影響しないFINAL (定型品のみ、その他のみ、一式のみ):
+      // 集計キャッシュを温存し、総伝票数のみローカルキャッシュで高速加算 (Optional Fast Local Count)
+      const fromDate = document.getElementById("summary-from-date") ? document.getElementById("summary-from-date").value : "";
+      const toDate = document.getElementById("summary-to-date") ? document.getElementById("summary-to-date").value : "";
+      const cached = TerminalStorage.getSummaryCache(resolvedBaseCode, fromDate, toDate);
+      if (cached) {
+        const curCount = cached.totalSlipsCount !== undefined ? cached.totalSlipsCount : (cached.data && cached.data.totalSlipsCount ? cached.data.totalSlipsCount : 0);
+        TerminalStorage.updateSummaryCountInCache(resolvedBaseCode, fromDate, toDate, curCount + 1, res.slipCountRevision);
+      }
     }
 
     // 印刷用伝票レコードおよび完了モーダル表示フラグを sessionStorage へ保存
@@ -1861,7 +1883,7 @@ function renderSummaryView() {
   const fromDate = document.getElementById("summary-from-date") ? document.getElementById("summary-from-date").value : "";
   const toDate = document.getElementById("summary-to-date") ? document.getElementById("summary-to-date").value : "";
 
-  // 1. キャッシュチェック (Fast Path)
+  // 1. キャッシュチェック (Fast Path: 即時描画)
   const cached = TerminalStorage.getSummaryCache(baseCode, fromDate, toDate);
   const cachedData = cached ? (cached.data || cached) : null;
   if (cachedData) {
@@ -1874,17 +1896,41 @@ function renderSummaryView() {
     }
   }
 
+  function handleStateComparison(state) {
+    const targetSlipRev = state.slipCountRevision !== undefined ? state.slipCountRevision : (state.historyRevision || 1);
+    const targetMatRev = state.materialSummaryRevision !== undefined ? state.materialSummaryRevision : (state.summaryRevision || 1);
+
+    if (!cached) {
+      fetchAndRenderSummary(tbody, baseCode, fromDate, toDate, { slipCountRevision: targetSlipRev, materialSummaryRevision: targetMatRev });
+      return;
+    }
+
+    const cachedSlipRev = cached.slipCountRevision !== undefined ? cached.slipCountRevision : 1;
+    const cachedMatRev = cached.materialSummaryRevision !== undefined ? cached.materialSummaryRevision : (cached.summaryRevision || 1);
+
+    const slipCountChanged = cachedSlipRev !== targetSlipRev;
+    const matChanged = cachedMatRev !== targetMatRev;
+
+    // CASE D: どちらも不変 -> 通信 0 (キャッシュ即描画で終了)
+    if (!slipCountChanged && !matChanged) {
+      return;
+    }
+
+    // CASE A: slipCountRevision のみ変化 -> summary-count だけ fetch (資材取得 0, Loading なし)
+    if (slipCountChanged && !matChanged) {
+      fetchAndRenderSummaryCount(baseCode, fromDate, toDate, targetSlipRev);
+      return;
+    }
+
+    // CASE B / C: materialSummaryRevision 変化 -> fetchSummary で資材含め最新化
+    fetchAndRenderSummary(tbody, baseCode, fromDate, toDate, { slipCountRevision: targetSlipRev, materialSummaryRevision: targetMatRev });
+  }
+
   // 2. State Snapshot チェック (30秒スロットル共有 & 判定不省略)
   if (TerminalStorage.isStateSnapshotFresh(baseCode)) {
     const snapshot = TerminalStorage.getStateSnapshot(baseCode);
-    const snapshotSummRev = snapshot && snapshot.summaryRevision !== undefined ? snapshot.summaryRevision : null;
-    // キャッシュがあり、かつスナップショットのリビジョンと一致しているなら通信 0 で終了
-    if (cached && snapshotSummRev !== null && cached.summaryRevision === snapshotSummRev) {
-      return;
-    }
-    // スナップショットでリビジョン不一致が検知された場合は本体取得へ進む (通信 0 で検知!)
-    if (snapshotSummRev !== null) {
-      fetchAndRenderSummary(tbody, baseCode, fromDate, toDate, snapshotSummRev);
+    if (snapshot) {
+      handleStateComparison(snapshot);
       return;
     }
   }
@@ -1893,25 +1939,31 @@ function renderSummaryView() {
   gasClient.fetchState(baseCode).then(stateRes => {
     if (stateRes && stateRes.success) {
       TerminalStorage.saveStateSnapshot(baseCode, stateRes);
+      handleStateComparison(stateRes);
     } else {
       TerminalStorage.setLastStateCheckTime(baseCode);
+      if (!cachedData) {
+        fetchAndRenderSummary(tbody, baseCode, fromDate, toDate, { slipCountRevision: 1, materialSummaryRevision: 1 });
+      }
     }
-    const serverSummRev = (stateRes && stateRes.success && stateRes.summaryRevision !== undefined)
-      ? stateRes.summaryRevision
-      : null;
-
-    // キャッシュがあり、かつリビジョンが一致しているなら本体再取得なし (通信 0)
-    if (cached && serverSummRev !== null && cached.summaryRevision === serverSummRev) {
-      return;
-    }
-
-    // リビジョン不一致またはキャッシュなし: 本体取得
-    fetchAndRenderSummary(tbody, baseCode, fromDate, toDate, serverSummRev || 1);
   }).catch(err => {
     console.error("[app.js] fetchState error:", err);
     if (!cachedData) {
-      fetchAndRenderSummary(tbody, baseCode, fromDate, toDate, 1);
+      fetchAndRenderSummary(tbody, baseCode, fromDate, toDate, { slipCountRevision: 1, materialSummaryRevision: 1 });
     }
+  });
+}
+
+function fetchAndRenderSummaryCount(baseCode, fromDate, toDate, slipCountRevision) {
+  gasClient.fetchSummaryCount({ baseCode, fromDate, toDate }).then(res => {
+    if (res && res.success) {
+      const count = res.totalSlipsCount;
+      const totalSlipsEl = document.getElementById("summary-total-slips");
+      if (totalSlipsEl) totalSlipsEl.textContent = count;
+      TerminalStorage.updateSummaryCountInCache(baseCode, fromDate, toDate, count, slipCountRevision);
+    }
+  }).catch(err => {
+    console.error("[app.js] fetchSummaryCount error:", err);
   });
 }
 
