@@ -172,11 +172,21 @@ function getStateSnapshot(baseCode) {
 function saveStateSnapshot(baseCode, stateData) {
   if (!baseCode || !stateData) return;
   try {
+    const slipRev = stateData.slipCountRevision !== undefined
+      ? stateData.slipCountRevision
+      : null;
+
+    const matRev = stateData.materialSummaryRevision !== undefined
+      ? stateData.materialSummaryRevision
+      : (stateData.summaryRevision !== undefined ? stateData.summaryRevision : null);
+
     const payload = {
       baseCode: baseCode,
       masterRevision: stateData.masterRevision !== undefined ? stateData.masterRevision : 1,
       historyRevision: stateData.historyRevision !== undefined ? stateData.historyRevision : 1,
-      summaryRevision: stateData.summaryRevision !== undefined ? stateData.summaryRevision : 1,
+      slipCountRevision: slipRev,
+      materialSummaryRevision: matRev,
+      summaryRevision: matRev !== null ? matRev : (stateData.summaryRevision !== undefined ? stateData.summaryRevision : null),
       serverTime: stateData.serverTime || "",
       checkedAt: Date.now()
     };

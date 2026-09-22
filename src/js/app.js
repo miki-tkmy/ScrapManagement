@@ -1958,8 +1958,47 @@ function renderSummaryView() {
   }
 
   function handleStateComparison(state) {
-    const targetSlipRev = state.slipCountRevision !== undefined ? state.slipCountRevision : (state.historyRevision || 1);
-    const targetMatRev = state.materialSummaryRevision !== undefined ? state.materialSummaryRevision : (state.summaryRevision || 1);
+    if (!state) return;
+
+    // slipCountRevision missing の場合は推測 fallback せず state API refresh
+    if (state.slipCountRevision === undefined || state.slipCountRevision === null) {
+      gasClient.fetchState(baseCode).then(stateRes => {
+        if (stateRes && stateRes.success) {
+          TerminalStorage.saveStateSnapshot(baseCode, stateRes);
+          handleStateComparison(stateRes);
+        } else if (!cachedData) {
+          fetchAndRenderSummary(tbody, baseCode, fromDate, toDate, { slipCountRevision: 1, materialSummaryRevision: 1 });
+        }
+      }).catch(err => {
+        console.error("[app.js] fetchState error:", err);
+        if (!cachedData) {
+          fetchAndRenderSummary(tbody, baseCode, fromDate, toDate, { slipCountRevision: 1, materialSummaryRevision: 1 });
+        }
+      });
+      return;
+    }
+
+    const targetSlipRev = state.slipCountRevision;
+    const targetMatRev = (state.materialSummaryRevision !== undefined && state.materialSummaryRevision !== null)
+      ? state.materialSummaryRevision
+      : ((state.summaryRevision !== undefined && state.summaryRevision !== null) ? state.summaryRevision : null);
+
+    if (targetMatRev === null) {
+      gasClient.fetchState(baseCode).then(stateRes => {
+        if (stateRes && stateRes.success) {
+          TerminalStorage.saveStateSnapshot(baseCode, stateRes);
+          handleStateComparison(stateRes);
+        } else if (!cachedData) {
+          fetchAndRenderSummary(tbody, baseCode, fromDate, toDate, { slipCountRevision: targetSlipRev, materialSummaryRevision: 1 });
+        }
+      }).catch(err => {
+        console.error("[app.js] fetchState error:", err);
+        if (!cachedData) {
+          fetchAndRenderSummary(tbody, baseCode, fromDate, toDate, { slipCountRevision: targetSlipRev, materialSummaryRevision: 1 });
+        }
+      });
+      return;
+    }
 
     if (!cached) {
       fetchAndRenderSummary(tbody, baseCode, fromDate, toDate, { slipCountRevision: targetSlipRev, materialSummaryRevision: targetMatRev });
@@ -1990,10 +2029,18 @@ function renderSummaryView() {
   // 2. State Snapshot チェック (30秒スロットル共有 & 判定不省略)
   if (TerminalStorage.isStateSnapshotFresh(baseCode)) {
     const snapshot = TerminalStorage.getStateSnapshot(baseCode);
-    if (snapshot) {
+    const hasSlipCount = snapshot && snapshot.slipCountRevision !== undefined && snapshot.slipCountRevision !== null;
+    const hasMatRev = snapshot && (
+      (snapshot.materialSummaryRevision !== undefined && snapshot.materialSummaryRevision !== null) ||
+      (snapshot.summaryRevision !== undefined && snapshot.summaryRevision !== null)
+    );
+
+    if (snapshot && hasSlipCount && hasMatRev) {
       handleStateComparison(snapshot);
       return;
     }
+    // 旧形式スナップショット (slipCountRevision missing等) の場合:
+    // Split Revision比較には使用せず、推測fallbackを行わずに軽量state APIを取得して新形式Snapshotへ置換する
   }
 
   // 3. State API 確認 (スナップショット期限切れ時: 軽量リビジョン取得)
@@ -2392,6 +2439,8 @@ if (typeof module !== "undefined" && module.exports) {
     fetchAndApplyMasters,
     getPrintQuantityDisplay,
     checkIfSlipAffectsSummary,
+    setGasClient: (client) => { gasClient = client; },
+    getGasClient: () => gasClient,
     getResolvedEmployeeInfo: () => ({
       resolvedEmployeeNo,
       resolvedEmployeeName,
