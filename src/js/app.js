@@ -553,14 +553,55 @@ function initFixedItemsList() {
   visibleList.forEach(fi => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td><strong>${fi.itemName}</strong></td>
-      <td>
-        <input type="text" class="form-input" style="padding:0.4rem 0.6rem;"
-          placeholder="数量 (例: 2, 一式)" id="fixed-qty-${fi.fixedItemId}">
+      <td style="vertical-align:middle;"><strong>${fi.itemName}</strong></td>
+      <td style="vertical-align:middle;">
+        <div class="qty-input-group fixed-qty-group">
+          <button type="button" class="btn-qty-input-step" id="btn-fixed-minus-${fi.fixedItemId}" onclick="stepFixedItemQuantity('${fi.fixedItemId}', -1)" aria-label="${fi.itemName}の数量を1減らす">－</button>
+          <input type="text" class="form-input" style="padding:0.4rem 0.4rem; text-align:center;"
+            placeholder="例: 2, 一式" id="fixed-qty-${fi.fixedItemId}">
+          <button type="button" class="btn-qty-input-step" id="btn-fixed-plus-${fi.fixedItemId}" onclick="stepFixedItemQuantity('${fi.fixedItemId}', 1)" aria-label="${fi.itemName}の数量を1増やす">＋</button>
+        </div>
       </td>
     `;
     tbody.appendChild(tr);
   });
+}
+
+/**
+ * 定型品数量のステップ変更 (+1 / -1)
+ * - 資材コード品数量 (stepFormQuantity) と同一セマンティクス
+ * - 10 -> 11, 10 -> 9
+ * - 1 -> 1 (0以下禁止)
+ * - 10+5 -> 16, 10+5 -> 14 (QuantityEngineで評価後にステップ)
+ * - 空 -> 1
+ * - 一式 -> no-op
+ */
+function stepFixedItemQuantity(fixedItemId, delta) {
+  if (!fixedItemId) return;
+  const qtyInput = document.getElementById(`fixed-qty-${fixedItemId}`);
+  if (!qtyInput) return;
+
+  const raw = qtyInput.value.trim();
+  if (raw === "一式" || raw === "1式") {
+    return; // 一式: 値を変更しない
+  }
+
+  if (!raw) {
+    qtyInput.value = "1";
+    return;
+  }
+
+  const parsed = QuantityEngine.parseQuantity(raw);
+  if (parsed.valid) {
+    if (parsed.type === "SET") {
+      return;
+    }
+    const cur = typeof parsed.value === "number" ? parsed.value : 1;
+    const next = Math.max(1, cur + delta);
+    qtyInput.value = String(next);
+  } else {
+    qtyInput.value = "1";
+  }
 }
 
 function collectFixedItems() {
@@ -997,9 +1038,7 @@ function closeCompletionModal() {
 }
 
 function handleCompletionOverlayClick(event) {
-  if (event.target && event.target.id === "completion-modal") {
-    closeCompletionModal();
-  }
+  // 背景タップで閉じない (正式終了操作は「確認」のみ)
 }
 
 function closeCompletionModalAndReset() {
@@ -1083,7 +1122,33 @@ function handleCompletionPrint() {
   if (slipRecord) {
     printSlipFromRecord(slipRecord);
   }
-  closeCompletionModal();
+  // 印刷押下時: completion modal は維持し、sessionStorageの完了状態も削除しない
+}
+
+function handleCompletionConfirm() {
+  // 1. completion modal を閉じる
+  const modal = document.getElementById("completion-modal");
+  if (modal) modal.style.display = "none";
+  document.body.classList.remove("modal-open");
+
+  // 2. completion state 完全削除
+  try {
+    sessionStorage.removeItem("scrap_completion_pending");
+    sessionStorage.removeItem("scrap_last_final_slip");
+  } catch (e) {
+    console.error("[app.js] Failed to clear completion state:", e);
+  }
+
+  // 3. 履歴キャッシュ無効化確認 (直前伝票を確実に最新取得)
+  if (resolvedBaseCode) {
+    TerminalStorage.invalidateHistoryCache(resolvedBaseCode);
+  }
+
+  // 4. 入力内容のクリーンアップ
+  resetInputFormAfterSubmission();
+
+  // 5. 履歴画面へ遷移し最新一覧を表示
+  switchTab("history");
 }
 
 // 12. 下書き一時保存 (Central DB DRAFT & ページ再読込リセット)
@@ -1964,6 +2029,7 @@ if (typeof module !== "undefined" && module.exports) {
     closeCompletionModal,
     closeCompletionModalAndReset,
     handleCompletionPrint,
+    handleCompletionConfirm,
     handleCompletionOverlayClick,
     saveTemporaryDraft,
     executeFinalize,
@@ -1980,6 +2046,7 @@ if (typeof module !== "undefined" && module.exports) {
     formatJstDate,
     formatJstDateTime,
     sortDrafts,
+    stepFixedItemQuantity,
     getJstDateString,
     showEmployeeUnconfiguredBanner,
     hideEmployeeUnconfiguredBanner,

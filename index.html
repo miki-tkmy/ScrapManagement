@@ -112,8 +112,8 @@
           <table class="materials-table responsive-table">
             <thead>
               <tr>
-                <th style="width:65%;">定型品名</th>
-                <th style="width:35%; text-align:right;">数量入力</th>
+                <th style="width:42%;">定型品名</th>
+                <th style="width:58%; text-align:right;">数量入力</th>
               </tr>
             </thead>
             <tbody id="fixed-items-tbody">
@@ -183,12 +183,12 @@
 
       <!-- 最下部アクションボタン (Document Flow内静的配置・固定禁止) -->
       <div class="bottom-action-bar">
-        <div class="action-bar-danger-zone">
-          <button type="button" class="btn btn-outline-danger" id="btn-full-clear" onclick="confirmFullClear()">全て削除</button>
-        </div>
         <div class="action-bar-inner">
           <button type="button" class="btn btn-secondary" id="btn-save-draft" onclick="saveTemporaryDraft()">一時保存</button>
           <button type="button" class="btn btn-primary" id="btn-finalize" onclick="handleFinalizeButtonClick()">完了</button>
+        </div>
+        <div class="action-bar-danger-zone">
+          <button type="button" class="btn btn-outline-danger" id="btn-full-clear" onclick="confirmFullClear()">全て削除</button>
         </div>
       </div>
     </section>
@@ -395,13 +395,14 @@
     </div>
   </div>
 
-  <!-- 完了モーダル (極小・内部情報非表示・印刷のみ) -->
-  <div id="completion-modal" class="modal-overlay" onclick="handleCompletionOverlayClick(event)">
+  <!-- 完了モーダル (極小・内部情報非表示・印刷 & 確認) -->
+  <div id="completion-modal" class="modal-overlay">
     <div class="modal-content completion-modal-content" onclick="event.stopPropagation()">
       <div class="completion-icon">✓</div>
       <h3 class="modal-title completion-title">完了しました</h3>
       <div class="completion-actions">
-        <button type="button" class="btn btn-primary" id="btn-completion-print" onclick="handleCompletionPrint()">印刷</button>
+        <button type="button" class="btn btn-secondary" id="btn-completion-print" onclick="handleCompletionPrint()">印刷</button>
+        <button type="button" class="btn btn-primary" id="btn-completion-confirm" onclick="handleCompletionConfirm()">確認</button>
       </div>
     </div>
   </div>

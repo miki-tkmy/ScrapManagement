@@ -863,14 +863,18 @@ body {
 
 .completion-actions {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 0.75rem;
+  width: 100%;
 }
 
 .completion-actions .btn {
-  width: 100%;
-  padding: 0.75rem;
-  font-size: 0.95rem;
+  flex: 1 1 0;
+  width: 50%;
+  padding: 0.75rem 0.5rem;
+  font-size: 1rem;
+  font-weight: 700;
+  min-height: 48px;
 }
 
 /* MOCK警告バッジ */
@@ -1051,19 +1055,40 @@ body.modal-open {
 /* 全て削除ボタン & アクションバー改善 */
 .bottom-action-bar {
   margin-top: 1.5rem;
-  margin-bottom: 2rem;
+  margin-bottom: 2.5rem;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
 }
 
+.action-bar-inner {
+  display: flex;
+  width: 100%;
+  gap: 0.65rem;
+}
+
+.action-bar-inner .btn {
+  flex: 1 1 0;
+  width: 50%;
+  min-height: 56px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem 0.5rem;
+}
+
 .action-bar-danger-zone {
   display: flex;
   width: 100%;
+  margin-top: 0.25rem;
 }
 
 .action-bar-danger-zone .btn-outline-danger {
   width: 100%;
+  min-height: 48px;
+  font-size: 0.95rem;
 }
 
 .btn-outline-danger {
@@ -1077,6 +1102,22 @@ body.modal-open {
 .btn-outline-danger:hover,
 .btn-outline-danger:active {
   background-color: #fef2f2 !important;
+}
+
+/* 定型品数量グループ */
+.fixed-qty-group {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.3rem;
+  width: 100%;
+  max-width: 200px;
+  margin-left: auto;
+}
+
+.fixed-qty-group .form-input {
+  text-align: center;
+  min-width: 0;
 }
 
 /* 一時保存中 カード表示 (390px モバイル最適化) */
@@ -1098,18 +1139,25 @@ body.modal-open {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 0.35rem;
+  margin-bottom: 0.4rem;
   border-bottom: 1px dashed var(--color-border);
-  padding-bottom: 0.3rem;
+  padding-bottom: 0.35rem;
 }
 
 .draft-card-no {
-  font-weight: 700;
-  font-size: 0.85rem;
-  color: var(--color-primary);
+  font-weight: 900;
+  font-size: 1.6rem;
+  line-height: 1;
+  color: var(--color-headline);
   background: var(--color-surface-subtle);
-  border-radius: 4px;
-  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 6px);
+  padding: 0.2rem 0.6rem;
+  min-width: 2.2rem;
+  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .draft-card-date {
