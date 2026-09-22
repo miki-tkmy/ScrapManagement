@@ -252,6 +252,16 @@ function initCompletionState() {
           };
           sessionStorage.setItem("scrap_last_perf_result", JSON.stringify(perfRecord));
           console.log(`[PERF-AUDIT] Total perceived: ${totalPerceived}ms (API: ${apiDuration}ms, Response: ${responseProcessing}ms, Reload/Bootstrap: ${reloadBootstrap}ms)`);
+
+          // テスト・自動計測用 非表示データ属性 (画面非表示)
+          let perfEl = document.getElementById("perf-result-data");
+          if (!perfEl) {
+            perfEl = document.createElement("div");
+            perfEl.id = "perf-result-data";
+            perfEl.style.display = "none";
+            document.body.appendChild(perfEl);
+          }
+          perfEl.textContent = JSON.stringify(perfRecord);
         } catch (parseErr) {
           console.warn("[app.js] Perf log parse error:", parseErr);
         }
