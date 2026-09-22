@@ -49,11 +49,47 @@ if (typeof document !== "undefined") {
   });
 }
 
-// 1. GAS クライアント初期化 & マスタ同期 (カテゴリ対応)
+// 1. GAS クライアント初期化 & マスタ同期 (カテゴリ対応 & リビジョンキャッシュ)
 function initGasClient() {
   gasClient = new GasClient();
   updateNetworkStatus();
 
+  // Fast Path: マスタキャッシュ (localStorage) があれば即時復元して画面操作可能へ
+  const cachedMasters = TerminalStorage.getMasterCache();
+  if (cachedMasters && cachedMasters.bases && cachedMasters.bases.length > 0) {
+    window.ACTIVE_BASES = cachedMasters.bases;
+    if (cachedMasters.items && cachedMasters.items.length > 0) window.ACTIVE_ITEMS = cachedMasters.items;
+    if (cachedMasters.fixedItems && cachedMasters.fixedItems.length > 0) {
+      window.ACTIVE_FIXED_ITEMS = cachedMasters.fixedItems;
+      initFixedItemsList();
+    }
+    if (cachedMasters.categories && cachedMasters.categories.length > 0) {
+      window.AVAILABLE_CATEGORIES = cachedMasters.categories;
+    }
+  }
+
+  // バックグラウンドで State / MasterRevision を確認
+  checkMasterRevisionAndUpdate();
+}
+
+function checkMasterRevisionAndUpdate() {
+  const cachedMasters = TerminalStorage.getMasterCache();
+  const cachedRev = (cachedMasters && cachedMasters.masterRevision) ? cachedMasters.masterRevision : 0;
+
+  gasClient.fetchState("GLOBAL").then(stateRes => {
+    const serverMasterRev = (stateRes && stateRes.success && stateRes.masterRevision) ? stateRes.masterRevision : null;
+    // キャッシュなし、または MasterRevision が更新されている場合のみ fetchMasters を実行
+    if (!cachedMasters || serverMasterRev === null || serverMasterRev !== cachedRev) {
+      fetchAndApplyMasters(serverMasterRev || 1);
+    }
+  }).catch(() => {
+    if (!cachedMasters) {
+      fetchAndApplyMasters(1);
+    }
+  });
+}
+
+function fetchAndApplyMasters(targetRevision = 1) {
   const userSettings = TerminalStorage.getUserSettings();
   const catOptions = { categories: userSettings.selectedMaterialCategories || [] };
 
@@ -68,6 +104,13 @@ function initGasClient() {
       if (Array.isArray(res.categories) && res.categories.length > 0) {
         window.AVAILABLE_CATEGORIES = res.categories;
       }
+      // マスタキャッシュ保存
+      TerminalStorage.saveMasterCache({
+        bases: window.ACTIVE_BASES,
+        items: window.ACTIVE_ITEMS,
+        fixedItems: window.ACTIVE_FIXED_ITEMS,
+        categories: window.AVAILABLE_CATEGORIES
+      }, targetRevision);
     } else if (gasClient.getMode() === "GAS_STAGING") {
       console.warn("[app.js] STAGING Backend masters unavailable:", res ? res.error : "Unknown");
     }
@@ -427,6 +470,11 @@ function addCodeItemFromForm() {
     return;
   }
 
+  if (rawQty === "0") {
+    showAppModal({ title: "数量エラー", message: "数量を1以上にしてください。" });
+    return;
+  }
+
   const parsedQty = QuantityEngine.parseQuantity(rawQty);
   if (!parsedQty.valid) {
     showAppModal({ title: "数量エラー", message: parsedQty.error });
@@ -459,11 +507,12 @@ function removeCodeItem(index) {
 }
 
 /**
- * 数量入力欄の増減ステップ (+/-) コントロール (V3.2)
+ * 数量入力欄の増減ステップ (+/-) コントロール (V3.5)
  * - 10 -> 11, 10 -> 9
- * - 1 -> 1 (0以下にしない)
+ * - 1 -> 0, 0 -> 0 (下限0)
  * - 10+5 -> 16, 10+5 -> 14 (QuantityEngineで評価後にステップ)
- * - 空 -> 1
+ * - 空 + -> 1, 空 - -> 0
+ * - 0 + -> 1, 0 - -> 0
  * - 一式 -> no-op
  */
 function stepFormQuantity(delta) {
@@ -476,7 +525,12 @@ function stepFormQuantity(delta) {
   }
 
   if (!raw) {
-    qtyInput.value = "1";
+    qtyInput.value = delta > 0 ? "1" : "0";
+    return;
+  }
+
+  if (raw === "0") {
+    qtyInput.value = delta > 0 ? "1" : "0";
     return;
   }
 
@@ -486,10 +540,10 @@ function stepFormQuantity(delta) {
       return;
     }
     const cur = typeof parsed.value === "number" ? parsed.value : 1;
-    const next = Math.max(1, cur + delta);
+    const next = Math.max(0, cur + delta);
     qtyInput.value = String(next);
   } else {
-    qtyInput.value = "1";
+    qtyInput.value = delta > 0 ? "1" : "0";
   }
 }
 
@@ -568,12 +622,13 @@ function initFixedItemsList() {
 }
 
 /**
- * 定型品数量のステップ変更 (+1 / -1)
+ * 定型品数量のステップ変更 (+1 / -1) (V3.5)
  * - 資材コード品数量 (stepFormQuantity) と同一セマンティクス
  * - 10 -> 11, 10 -> 9
- * - 1 -> 1 (0以下禁止)
+ * - 1 -> 0, 0 -> 0 (下限0)
  * - 10+5 -> 16, 10+5 -> 14 (QuantityEngineで評価後にステップ)
- * - 空 -> 1
+ * - 空 + -> 1, 空 - -> 0
+ * - 0 + -> 1, 0 - -> 0
  * - 一式 -> no-op
  */
 function stepFixedItemQuantity(fixedItemId, delta) {
@@ -587,7 +642,12 @@ function stepFixedItemQuantity(fixedItemId, delta) {
   }
 
   if (!raw) {
-    qtyInput.value = "1";
+    qtyInput.value = delta > 0 ? "1" : "0";
+    return;
+  }
+
+  if (raw === "0") {
+    qtyInput.value = delta > 0 ? "1" : "0";
     return;
   }
 
@@ -597,10 +657,10 @@ function stepFixedItemQuantity(fixedItemId, delta) {
       return;
     }
     const cur = typeof parsed.value === "number" ? parsed.value : 1;
-    const next = Math.max(1, cur + delta);
+    const next = Math.max(0, cur + delta);
     qtyInput.value = String(next);
   } else {
-    qtyInput.value = "1";
+    qtyInput.value = delta > 0 ? "1" : "0";
   }
 }
 
@@ -613,7 +673,9 @@ function collectFixedItems() {
   allFixed.forEach(fi => {
     const input = document.getElementById(`fixed-qty-${fi.fixedItemId}`);
     if (input && input.value.trim()) {
-      const parsed = QuantityEngine.parseQuantity(input.value.trim());
+      const raw = input.value.trim();
+      if (raw === "0") return; // 0 は保存対象外 (未選択・数量なし扱い)
+      const parsed = QuantityEngine.parseQuantity(raw);
       if (parsed.valid) {
         result.push({
           fixedItemId: fi.fixedItemId,
@@ -1369,7 +1431,7 @@ function renderDraftSection(drafts) {
   const sorted = sortDrafts(drafts);
 
   sorted.forEach((d, idx) => {
-    const displayNo = idx + 1;
+    const displayNo = sorted.length - idx; // 最新ほど大きい番号 (V3.5)
     const disposalDateStr = formatJstDate(d.date);
     const savedAtStr = formatJstDateTime(d.savedAt || d.updatedAt || d.createdAt);
     const staffNameStr = d.staffName || "未入力";
@@ -1419,19 +1481,46 @@ function renderHistoryTable() {
 
   const baseCode = resolvedBaseCode;
 
-  // 1. キャッシュチェック (5分TTL)
+  // 1. キャッシュチェック (Fast Path)
   const cached = TerminalStorage.getHistoryCache(baseCode);
-  if (cached) {
+  if (cached && cached.finalSlips) {
     centralHistorySlips = cached.finalSlips || [];
     centralDraftSlips = cached.draftSlips || [];
     renderHistoryRows(tbody, centralHistorySlips);
     renderDraftSection(centralDraftSlips);
-    return;
+
+    // 2. 30秒スロットル内なら通信 0 で終了
+    if (TerminalStorage.isStateCheckThrottled(baseCode)) {
+      return;
+    }
+  } else {
+    // 初回キャッシュ未存在時のみ Loading 表示
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--color-text-muted); padding:1.5rem;">履歴を取得中...</td></tr>`;
   }
 
-  tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--color-text-muted); padding:1.5rem;">履歴を取得中...</td></tr>`;
+  // 3. State API 確認 (軽量リビジョン取得)
+  gasClient.fetchState(baseCode).then(stateRes => {
+    TerminalStorage.setLastStateCheckTime(baseCode);
+    const serverHistRev = (stateRes && stateRes.success && stateRes.historyRevision !== undefined)
+      ? stateRes.historyRevision
+      : null;
 
-  // 確定伝票 & 一時保存下書きの並行取得
+    // キャッシュがあり、かつリビジョンが一致しているなら本体再取得なし (通信 0)
+    if (cached && serverHistRev !== null && cached.historyRevision === serverHistRev) {
+      return;
+    }
+
+    // リビジョン不一致またはキャッシュなし: 本体取得
+    fetchAndRenderHistory(tbody, baseCode, serverHistRev || 1);
+  }).catch(err => {
+    console.error("[app.js] fetchState error:", err);
+    if (!cached) {
+      fetchAndRenderHistory(tbody, baseCode, 1);
+    }
+  });
+}
+
+function fetchAndRenderHistory(tbody, baseCode, revision) {
   Promise.all([
     gasClient.fetchHistory({ baseCode: baseCode, status: "FINAL" }),
     gasClient.fetchHistory({ baseCode: baseCode, status: "DRAFT" })
@@ -1439,11 +1528,11 @@ function renderHistoryTable() {
     centralHistorySlips = (finalRes && finalRes.success && Array.isArray(finalRes.slips)) ? finalRes.slips : [];
     centralDraftSlips = (draftRes && draftRes.success && Array.isArray(draftRes.slips)) ? draftRes.slips : [];
 
-    // キャッシュ保存 (5分TTL)
+    // キャッシュ保存 (リビジョン連動)
     TerminalStorage.saveHistoryCache(baseCode, {
       finalSlips: centralHistorySlips,
       draftSlips: centralDraftSlips
-    });
+    }, revision);
 
     renderHistoryRows(tbody, centralHistorySlips);
     renderDraftSection(centralDraftSlips);
@@ -1691,29 +1780,58 @@ function renderSummaryView() {
   const fromDate = document.getElementById("summary-from-date") ? document.getElementById("summary-from-date").value : "";
   const toDate = document.getElementById("summary-to-date") ? document.getElementById("summary-to-date").value : "";
 
-  // 1. キャッシュチェック (5分TTL)
+  // 1. キャッシュチェック (Fast Path)
   const cached = TerminalStorage.getSummaryCache(baseCode, fromDate, toDate);
-  if (cached) {
-    currentSummaryData = cached;
-    updateSummaryUi(cached);
-    return;
+  const cachedData = cached ? (cached.data || cached) : null;
+  if (cachedData) {
+    currentSummaryData = cachedData;
+    updateSummaryUi(cachedData);
+
+    // 2. 30秒スロットル内なら通信 0 で終了
+    if (TerminalStorage.isStateCheckThrottled(baseCode)) {
+      return;
+    }
+  } else {
+    // 初回キャッシュなし時のみ Loading 表示
+    if (tbody) {
+      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--color-text-muted); padding:1.5rem;">集計データを取得中...</td></tr>`;
+    }
   }
 
-  // Loading 表示
-  if (tbody) {
-    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--color-text-muted); padding:1.5rem;">集計データを取得中...</td></tr>`;
-  }
+  // 3. State API 確認 (軽量リビジョン取得)
+  gasClient.fetchState(baseCode).then(stateRes => {
+    TerminalStorage.setLastStateCheckTime(baseCode);
+    const serverSummRev = (stateRes && stateRes.success && stateRes.summaryRevision !== undefined)
+      ? stateRes.summaryRevision
+      : null;
 
+    // キャッシュがあり、かつリビジョンが一致しているなら本体再取得なし (通信 0)
+    if (cached && serverSummRev !== null && cached.summaryRevision === serverSummRev) {
+      return;
+    }
+
+    // リビジョン不一致またはキャッシュなし: 本体取得
+    fetchAndRenderSummary(tbody, baseCode, fromDate, toDate, serverSummRev || 1);
+  }).catch(err => {
+    console.error("[app.js] fetchState error:", err);
+    if (!cachedData) {
+      fetchAndRenderSummary(tbody, baseCode, fromDate, toDate, 1);
+    }
+  });
+}
+
+function fetchAndRenderSummary(tbody, baseCode, fromDate, toDate, revision) {
   gasClient.fetchSummary({ baseCode, fromDate, toDate }).then(res => {
     if (res && res.success) {
       currentSummaryData = res;
-      TerminalStorage.saveSummaryCache(baseCode, fromDate, toDate, res);
-      updateSummaryUi(res);
+      TerminalStorage.saveSummaryCache(baseCode, fromDate, toDate, currentSummaryData, revision);
+      updateSummaryUi(currentSummaryData);
     } else {
       const fallback = TerminalStorage.getSummaryCache(baseCode, fromDate, toDate);
-      if (fallback) {
-        currentSummaryData = fallback;
-        updateSummaryUi(fallback);
+      const fallbackData = fallback ? (fallback.data || fallback) : null;
+      if (fallbackData) {
+        currentSummaryData = fallbackData;
+        updateSummaryUi(fallbackData);
         showAppModal({ title: "お知らせ", message: "最新情報を取得できませんでした。直前のキャッシュを表示しています。" });
       } else {
         currentSummaryData = { totalSlipsCount: 0, totalWeightKg: 0, totalItemsCount: 0, items: [] };
@@ -1726,15 +1844,16 @@ function renderSummaryView() {
   }).catch(err => {
     console.error("[app.js] fetchSummary error:", err);
     const fallback = TerminalStorage.getSummaryCache(baseCode, fromDate, toDate);
-    if (fallback) {
-      currentSummaryData = fallback;
-      updateSummaryUi(fallback);
+    const fallbackData = fallback ? (fallback.data || fallback) : null;
+    if (fallbackData) {
+      currentSummaryData = fallbackData;
+      updateSummaryUi(fallbackData);
       showAppModal({ title: "お知らせ", message: "最新情報を取得できませんでした。直前のキャッシュを表示しています。" });
     } else {
       currentSummaryData = { totalSlipsCount: 0, totalWeightKg: 0, totalItemsCount: 0, items: [] };
       updateSummaryUi(currentSummaryData);
       if (tbody) {
-        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--color-danger); padding:1.5rem;">集計データを取得できませんでした</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--color-danger); padding:1.5rem;">サーバーとの通信に失敗しました</td></tr>`;
       }
     }
   });

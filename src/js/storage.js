@@ -123,32 +123,80 @@ function saveAppSettings(settings) {
   } catch (e) {}
 }
 
-// 5. 履歴・集計 高速化キャッシュ (sessionStorage, 5分TTL, SSOTではない)
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5分 (300,000ms)
 
-function getHistoryCache(baseCode) {
-  if (!baseCode) return null;
+// キャッシュ設定 (リビジョン連動型 & 30秒スロットル)
+const STATE_THROTTLE_MS = 30 * 1000; // 30秒
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // セーフティネットとしてのTTL
+
+function getLastStateCheckTime(baseCode) {
   try {
-    const raw = sessionStorage.getItem(`scrap_cache_history_${baseCode}`);
+    const raw = sessionStorage.getItem(`scrap_state_checked_${baseCode || "GLOBAL"}`);
+    return raw ? parseInt(raw, 10) : 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
+function setLastStateCheckTime(baseCode, time = Date.now()) {
+  try {
+    sessionStorage.setItem(`scrap_state_checked_${baseCode || "GLOBAL"}`, String(time));
+  } catch (e) {}
+}
+
+function isStateCheckThrottled(baseCode) {
+  const last = getLastStateCheckTime(baseCode);
+  return (Date.now() - last) < STATE_THROTTLE_MS;
+}
+
+// 1. マスタキャッシュ (localStorage)
+function getMasterCache() {
+  try {
+    const raw = localStorage.getItem("scrap_cache_master");
     if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    const now = Date.now();
-    if (parsed.fetchedAt && (now - parsed.fetchedAt) < CACHE_TTL_MS) {
-      return parsed;
-    }
-    // 期限切れ
-    sessionStorage.removeItem(`scrap_cache_history_${baseCode}`);
-    return null;
+    return JSON.parse(raw);
   } catch (e) {
     return null;
   }
 }
 
-function saveHistoryCache(baseCode, cacheData) {
+function saveMasterCache(masterData, masterRevision = 1) {
+  try {
+    const payload = {
+      masterRevision: masterRevision,
+      bases: masterData.bases || [],
+      items: masterData.items || [],
+      fixedItems: masterData.fixedItems || [],
+      categories: masterData.categories || [],
+      fetchedAt: Date.now()
+    };
+    localStorage.setItem("scrap_cache_master", JSON.stringify(payload));
+  } catch (e) {}
+}
+
+function invalidateMasterCache() {
+  try {
+    localStorage.removeItem("scrap_cache_master");
+  } catch (e) {}
+}
+
+// 2. 履歴キャッシュ (sessionStorage)
+function getHistoryCache(baseCode) {
+  if (!baseCode) return null;
+  try {
+    const raw = sessionStorage.getItem(`scrap_cache_history_${baseCode}`);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (e) {
+    return null;
+  }
+}
+
+function saveHistoryCache(baseCode, cacheData, historyRevision = 1) {
   if (!baseCode) return;
   try {
     const payload = {
       baseCode: baseCode,
+      historyRevision: historyRevision,
       finalSlips: cacheData.finalSlips || [],
       draftSlips: cacheData.draftSlips || [],
       fetchedAt: Date.now()
@@ -173,31 +221,26 @@ function invalidateHistoryCache(baseCode) {
   } catch (e) {}
 }
 
+// 3. 集計キャッシュ (sessionStorage)
 function getSummaryCache(baseCode, fromDate, toDate) {
   if (!baseCode) return null;
   const key = `scrap_cache_summary_${baseCode}_${fromDate || ""}_${toDate || ""}`;
   try {
     const raw = sessionStorage.getItem(key);
     if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    const now = Date.now();
-    if (parsed.fetchedAt && (now - parsed.fetchedAt) < CACHE_TTL_MS) {
-      return parsed.data;
-    }
-    // 期限切れ
-    sessionStorage.removeItem(key);
-    return null;
+    return JSON.parse(raw);
   } catch (e) {
     return null;
   }
 }
 
-function saveSummaryCache(baseCode, fromDate, toDate, data) {
+function saveSummaryCache(baseCode, fromDate, toDate, data, summaryRevision = 1) {
   if (!baseCode) return;
   const key = `scrap_cache_summary_${baseCode}_${fromDate || ""}_${toDate || ""}`;
   try {
     const payload = {
       data: data,
+      summaryRevision: summaryRevision,
       fetchedAt: Date.now()
     };
     sessionStorage.setItem(key, JSON.stringify(payload));
@@ -233,7 +276,14 @@ if (typeof module !== "undefined" && module.exports) {
     clearLocalDraft,
     getAppSettings,
     saveAppSettings,
+    STATE_THROTTLE_MS,
     CACHE_TTL_MS,
+    getLastStateCheckTime,
+    setLastStateCheckTime,
+    isStateCheckThrottled,
+    getMasterCache,
+    saveMasterCache,
+    invalidateMasterCache,
     getHistoryCache,
     saveHistoryCache,
     invalidateHistoryCache,
@@ -255,7 +305,14 @@ if (typeof window !== "undefined") {
     clearLocalDraft,
     getAppSettings,
     saveAppSettings,
+    STATE_THROTTLE_MS,
     CACHE_TTL_MS,
+    getLastStateCheckTime,
+    setLastStateCheckTime,
+    isStateCheckThrottled,
+    getMasterCache,
+    saveMasterCache,
+    invalidateMasterCache,
     getHistoryCache,
     saveHistoryCache,
     invalidateHistoryCache,

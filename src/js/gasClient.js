@@ -32,6 +32,13 @@ class GasClient {
       "E00003": { empNo: "E00003", employeeName: "テスト担当C", baseCode: "B02", baseName: "東京第一Base", active: true },
       "E00004": { empNo: "E00004", employeeName: "休職担当", baseCode: "B01", baseName: "仙台Base", active: false }
     };
+
+    // MOCK 用リビジョン管理 (V3.5)
+    this._mockRevisions = {
+      masterRevision: 1,
+      historyRevisions: {},
+      summaryRevisions: {}
+    };
   }
 
   setEndpoint(url) {
@@ -110,6 +117,52 @@ class GasClient {
       return data;
     } catch (e) {
       console.error("[gasClient] getAppSettings failed:", e);
+      return {
+        success: false,
+        mode: "GAS_STAGING",
+        error: "STAGING_BACKEND_UNAVAILABLE",
+        message: e.message
+      };
+    }
+  }
+
+  // 2.5. リビジョン状態取得 (GET action=state) - V3.5 軽量API
+  async fetchState(baseCode = "GLOBAL") {
+    if (this.isMockMode) {
+      if (!this._mockRevisions) {
+        this._mockRevisions = { masterRevision: 1, historyRevisions: {}, summaryRevisions: {} };
+      }
+      const b = baseCode || "GLOBAL";
+      return {
+        success: true,
+        mode: "MOCK",
+        baseCode: b,
+        masterRevision: this._mockRevisions.masterRevision || 1,
+        historyRevision: this._mockRevisions.historyRevisions[b] || 1,
+        summaryRevision: this._mockRevisions.summaryRevisions[b] || 1,
+        serverTime: new Date().toISOString()
+      };
+    }
+
+    if (this.isUnconfiguredStaging) {
+      return {
+        success: false,
+        mode: "STAGING_UNCONFIGURED",
+        error: "STAGING_ENDPOINT_NOT_CONFIGURED",
+        message: "STAGING Web App URL is not configured in src/js/config.js."
+      };
+    }
+
+    try {
+      const resp = await fetch(`${this.endpointUrl}?action=state&baseCode=${encodeURIComponent(baseCode || "GLOBAL")}`, {
+        method: "GET"
+      });
+      if (!resp.ok) throw new Error(`HTTP Error: ${resp.status}`);
+      const data = await resp.json();
+      data.mode = "GAS_STAGING";
+      return data;
+    } catch (e) {
+      console.error("[gasClient] fetchState failed:", e);
       return {
         success: false,
         mode: "GAS_STAGING",
@@ -459,6 +512,9 @@ class GasClient {
   async saveDraft(draftPayload) {
     if (this.isMockMode) {
       const scrapId = draftPayload.scrapId || draftPayload.slipId || `DRAFT-${Date.now()}`;
+      const b = draftPayload.baseCode || "GLOBAL";
+      if (!this._mockRevisions.historyRevisions[b]) this._mockRevisions.historyRevisions[b] = 1;
+      this._mockRevisions.historyRevisions[b]++;
       return {
         success: true,
         mode: "MOCK",
@@ -539,6 +595,9 @@ class GasClient {
         }
       }
 
+      if (!this._mockRevisions.historyRevisions[cleanBaseCode]) this._mockRevisions.historyRevisions[cleanBaseCode] = 1;
+      this._mockRevisions.historyRevisions[cleanBaseCode]++;
+
       return {
         success: true,
         mode: "MOCK",
@@ -598,6 +657,12 @@ class GasClient {
         finalizedAt: new Date().toISOString()
       });
       this.mockSlips.unshift(confirmed);
+
+      if (!this._mockRevisions.historyRevisions[baseCode]) this._mockRevisions.historyRevisions[baseCode] = 1;
+      this._mockRevisions.historyRevisions[baseCode]++;
+      if (!this._mockRevisions.summaryRevisions[baseCode]) this._mockRevisions.summaryRevisions[baseCode] = 1;
+      this._mockRevisions.summaryRevisions[baseCode]++;
+
       return {
         success: true,
         mode: "MOCK",
