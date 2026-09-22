@@ -39,6 +39,7 @@ function parseQuantity(input) {
   const normalized = raw
     .replace(/[０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
     .replace(/＋/g, "+")
+    // 減算記号: '－'(U+FF0D), '−'(U+2212) を '-' へ変換 (※日本語長音記号 'ー' は数学記号ではないため減算対象外)
     .replace(/[－−]/g, "-")
     .replace(/[×ｘＸxX*]/g, "*")
     .replace(/[÷／/]/g, "/")
