@@ -409,9 +409,12 @@ class GasClient {
       let totalWeightKg = 0;
       let totalItemsCount = 0;
 
+      let totalEligibleSlipsCount = 0;
       slips.forEach(s => {
+        let slipHasEligibleCode = false;
         (s.codeItems || []).forEach(it => {
-          if (it.quantityType === "NUMBER" && typeof it.quantityValue === "number") {
+          if (it.quantityType === "NUMBER" && typeof it.quantityValue === "number" && it.quantityValue > 0) {
+            slipHasEligibleCode = true;
             totalItemsCount += it.quantityValue;
             const code = (it.itemCode ? String(it.itemCode).trim() : "") || "UNKNOWN";
             const detailName = it.itemName || "";
@@ -431,6 +434,9 @@ class GasClient {
             }
           }
         });
+        if (slipHasEligibleCode) {
+          totalEligibleSlipsCount++;
+        }
       });
 
       return {
@@ -440,7 +446,7 @@ class GasClient {
         baseCode: baseCode,
         fromDate: fromDate,
         toDate: toDate,
-        totalSlipsCount: slips.length,
+        totalSlipsCount: totalEligibleSlipsCount,
         totalWeightKg: totalWeightKg,
         totalItemsCount: totalItemsCount,
         items: Object.values(itemMap)
@@ -665,10 +671,20 @@ class GasClient {
       });
       this.mockSlips.unshift(confirmed);
 
+      // 集計影響判定 (CODE + NUMBER > 0)
+      const affectsSummary = (finalPayload.codeItems || []).some(it => {
+        const qtyVal = Number(it.quantityValue);
+        const qtyType = String(it.quantityType || "NUMBER");
+        return qtyType === "NUMBER" && Number.isFinite(qtyVal) && qtyVal > 0;
+      });
+
       if (!this._mockRevisions.historyRevisions[baseCode]) this._mockRevisions.historyRevisions[baseCode] = 1;
       this._mockRevisions.historyRevisions[baseCode]++;
-      if (!this._mockRevisions.summaryRevisions[baseCode]) this._mockRevisions.summaryRevisions[baseCode] = 1;
-      this._mockRevisions.summaryRevisions[baseCode]++;
+
+      if (affectsSummary) {
+        if (!this._mockRevisions.summaryRevisions[baseCode]) this._mockRevisions.summaryRevisions[baseCode] = 1;
+        this._mockRevisions.summaryRevisions[baseCode]++;
+      }
 
       return {
         success: true,
@@ -677,7 +693,9 @@ class GasClient {
         scrapId: scrapId,
         slipId: slipNo,
         slipNo: slipNo,
-        finalizedAt: confirmed.finalizedAt
+        finalizedAt: confirmed.finalizedAt,
+        createdBy: finalPayload.employeeNo || "",
+        affectsSummary: affectsSummary
       };
     }
 

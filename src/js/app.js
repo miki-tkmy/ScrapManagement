@@ -1091,9 +1091,17 @@ function executeFinalize(isWithoutSignature, signatureDataUrl = null) {
     lastFinalizedSlipData = slipRecord;
     TerminalStorage.clearLocalDraft();
 
-    // 履歴および集計キャッシュを無効化
+    // 履歴キャッシュは必ず無効化
     TerminalStorage.invalidateHistoryCache(resolvedBaseCode);
-    TerminalStorage.invalidateSummaryCache(resolvedBaseCode);
+
+    // 集計キャッシュは affectsSummary === true の場合のみ無効化 (Backendレスポンス優先、ローカル判定フォールバック)
+    const shouldInvalidateSummary = (res && typeof res.affectsSummary === "boolean")
+      ? res.affectsSummary
+      : checkIfSlipAffectsSummary(slipRecord);
+
+    if (shouldInvalidateSummary) {
+      TerminalStorage.invalidateSummaryCache(resolvedBaseCode);
+    }
 
     // 印刷用伝票レコードおよび完了モーダル表示フラグを sessionStorage へ保存
     try {
@@ -1664,6 +1672,31 @@ function printSlipFromHistory(index) {
   }
 }
 
+// 13.5. 印刷数量表示正規化ヘルパー & 集計影響判定ヘルパー (V3.7)
+function getPrintQuantityDisplay(item) {
+  if (!item) return "";
+  if (item.quantityType === "SET") {
+    return "一式";
+  }
+  if (
+    item.quantityType === "NUMBER" &&
+    typeof item.quantityValue === "number"
+  ) {
+    return String(item.quantityValue);
+  }
+  return item.quantityInput || "";
+}
+
+function checkIfSlipAffectsSummary(slipRecord) {
+  if (!slipRecord) return false;
+  const codeItems = slipRecord.codeItems || [];
+  return codeItems.some(item => {
+    const qtyVal = Number(item.quantityValue);
+    const qtyType = String(item.quantityType || "NUMBER");
+    return qtyType === "NUMBER" && Number.isFinite(qtyVal) && qtyVal > 0;
+  });
+}
+
 // 14. 印刷帳票レンダリング (2x2「田」レイアウト & 右上伝票番号のみ & 署名なし空白)
 function printSlipFromRecord(s) {
   if (!s) return;
@@ -1683,7 +1716,7 @@ function printSlipFromRecord(s) {
   if (printStaffEl) printStaffEl.textContent = s.staffName || "";
   if (printVendorEl) printVendorEl.textContent = s.vendorName || "";
 
-  // 明細テーブル (重量非表示)
+  // 明細テーブル (重量非表示 & 数量は計算後総数を表示)
   const tbody = document.getElementById("print-items-tbody");
   if (tbody) {
     tbody.innerHTML = "";
@@ -1695,7 +1728,7 @@ function printSlipFromRecord(s) {
         <td class="text-center">${lineNo++}</td>
         <td>資材コード品</td>
         <td>${it.itemName} (${it.itemCode})</td>
-        <td class="text-right">${it.quantityInput}</td>
+        <td class="text-right">${getPrintQuantityDisplay(it)}</td>
       `;
       tbody.appendChild(tr);
     });
@@ -1706,7 +1739,7 @@ function printSlipFromRecord(s) {
         <td class="text-center">${lineNo++}</td>
         <td>定型品</td>
         <td>${fi.itemName}</td>
-        <td class="text-right">${fi.quantityInput}</td>
+        <td class="text-right">${getPrintQuantityDisplay(fi)}</td>
       `;
       tbody.appendChild(tr);
     });
@@ -1717,7 +1750,7 @@ function printSlipFromRecord(s) {
         <td class="text-center">${lineNo++}</td>
         <td>その他品</td>
         <td>${oi.itemName}</td>
-        <td class="text-right">${oi.quantityInput}</td>
+        <td class="text-right">${oi.quantityInput || ""}</td>
       `;
       tbody.appendChild(tr);
     });
@@ -2244,6 +2277,8 @@ if (typeof module !== "undefined" && module.exports) {
     applyMaterialCategoryFilter,
     saveCategoryPreferences,
     fetchAndApplyMasters,
+    getPrintQuantityDisplay,
+    checkIfSlipAffectsSummary,
     getResolvedEmployeeInfo: () => ({
       resolvedEmployeeNo,
       resolvedEmployeeName,
@@ -2252,3 +2287,9 @@ if (typeof module !== "undefined" && module.exports) {
     })
   };
 }
+
+if (typeof window !== "undefined") {
+  window.getPrintQuantityDisplay = getPrintQuantityDisplay;
+  window.checkIfSlipAffectsSummary = checkIfSlipAffectsSummary;
+}
+
