@@ -34,8 +34,9 @@ let resolvedBaseName = "";
 
 if (typeof document !== "undefined") {
   document.addEventListener("DOMContentLoaded", () => {
-    initGasClient();
     initUserSettings();
+    initCompletionState(); // Section 8: Priority - open completion modal immediately before background sync
+    initGasClient();
     initBaseCodeHandlers();
     initItemCodeHandlers();
     initFixedItemsList();
@@ -45,7 +46,6 @@ if (typeof document !== "undefined") {
     setupHalfWidthNormalization(document.getElementById("other-qty-input"));
     updateWeightDisplay();
     updateSignatureDisplay();
-    initCompletionState();
   });
 }
 
@@ -218,9 +218,44 @@ function hideEmployeeUnconfiguredBanner() {
 
 function initCompletionState() {
   try {
+    const t5 = (typeof performance !== "undefined" && performance.timeOrigin) ? (performance.timeOrigin + performance.now()) : Date.now();
     const completionPending = sessionStorage.getItem("scrap_completion_pending");
     if (completionPending === "true") {
+      const t6 = (typeof performance !== "undefined" && performance.timeOrigin) ? (performance.timeOrigin + performance.now()) : Date.now();
       openCompletionModal();
+      const t7 = (typeof performance !== "undefined" && performance.timeOrigin) ? (performance.timeOrigin + performance.now()) : Date.now();
+
+      // End-to-End 計測データの集計 (Section 4 & 5)
+      const perfRaw = sessionStorage.getItem("scrap_finalize_perf");
+      if (perfRaw) {
+        try {
+          const perf = JSON.parse(perfRaw);
+          const apiDuration = Math.max(0, Math.round(perf.t2 - perf.t1));
+          const responseProcessing = Math.max(0, Math.round(perf.t4 - perf.t2));
+          const reloadBootstrap = Math.max(0, Math.round(t7 - perf.t4));
+          const totalPerceived = Math.max(0, Math.round(t7 - perf.t0));
+
+          const perfRecord = {
+            t0: perf.t0,
+            t1: perf.t1,
+            t2: perf.t2,
+            t3: perf.t3,
+            t4: perf.t4,
+            t5: t5,
+            t6: t6,
+            t7: t7,
+            apiDuration: apiDuration,
+            responseProcessing: responseProcessing,
+            reloadBootstrap: reloadBootstrap,
+            totalPerceived: totalPerceived,
+            measuredAt: new Date().toISOString()
+          };
+          sessionStorage.setItem("scrap_last_perf_result", JSON.stringify(perfRecord));
+          console.log(`[PERF-AUDIT] Total perceived: ${totalPerceived}ms (API: ${apiDuration}ms, Response: ${responseProcessing}ms, Reload/Bootstrap: ${reloadBootstrap}ms)`);
+        } catch (parseErr) {
+          console.warn("[app.js] Perf log parse error:", parseErr);
+        }
+      }
     }
 
     const draftSavedSuccess = sessionStorage.getItem("scrap_draft_saved_success");
@@ -1022,6 +1057,7 @@ function generateSecureScrapId() {
 }
 
 function executeFinalize(isWithoutSignature, signatureDataUrl = null) {
+  const t0 = (typeof performance !== "undefined" && performance.timeOrigin) ? (performance.timeOrigin + performance.now()) : Date.now();
   closeNoSignatureModal();
 
   if (!resolvedBaseCode) {
@@ -1068,10 +1104,12 @@ function executeFinalize(isWithoutSignature, signatureDataUrl = null) {
   const slipRecord = pendingFinalizeSlip;
   setFinalizeButtonsDisabled(true);
 
+  const t1 = (typeof performance !== "undefined" && performance.timeOrigin) ? (performance.timeOrigin + performance.now()) : Date.now();
   const tFinalizeStart = performance.now();
 
   // Central DB へ送信
   gasClient.finalizeSlip(slipRecord).then(res => {
+    const t2 = (typeof performance !== "undefined" && performance.timeOrigin) ? (performance.timeOrigin + performance.now()) : Date.now();
     const tFinalizeResponse = performance.now();
     const finalizeRoundtripMs = Math.round(tFinalizeResponse - tFinalizeStart);
     if (res && res.debugTimings) {
@@ -1120,15 +1158,28 @@ function executeFinalize(isWithoutSignature, signatureDataUrl = null) {
       const toDate = document.getElementById("summary-to-date") ? document.getElementById("summary-to-date").value : "";
       const cached = TerminalStorage.getSummaryCache(resolvedBaseCode, fromDate, toDate);
       if (cached) {
-        const curCount = cached.totalSlipsCount !== undefined ? cached.totalSlipsCount : (cached.data && cached.data.totalSlipsCount ? cached.data.totalSlipsCount : 0);
-        TerminalStorage.updateSummaryCountInCache(resolvedBaseCode, fromDate, toDate, curCount + 1, res.slipCountRevision);
+        // Section 10: 冪等性チェック (重複確定/リトライ時は二重加算しない)
+        const isDuplicateFinal = res.status === "ALREADY_FINALIZED" || res.duplicatePrevented === true;
+        // Section 9: 期間条件チェック (確定伝票の処分日がキャッシュ期間に含まれる場合のみ加算)
+        const slipDate = slipRecord.date; // YYYY-MM-DD
+        const inRange = (!fromDate || slipDate >= fromDate) && (!toDate || slipDate <= toDate);
+
+        if (!isDuplicateFinal && inRange) {
+          const curCount = cached.totalSlipsCount !== undefined ? cached.totalSlipsCount : (cached.data && cached.data.totalSlipsCount ? cached.data.totalSlipsCount : 0);
+          TerminalStorage.updateSummaryCountInCache(resolvedBaseCode, fromDate, toDate, curCount + 1, res.slipCountRevision);
+        }
       }
     }
 
     // 印刷用伝票レコードおよび完了モーダル表示フラグを sessionStorage へ保存
+    let t3 = Date.now();
+    let t4 = Date.now();
     try {
       sessionStorage.setItem("scrap_last_final_slip", JSON.stringify(slipRecord));
       sessionStorage.setItem("scrap_completion_pending", "true");
+      t3 = (typeof performance !== "undefined" && performance.timeOrigin) ? (performance.timeOrigin + performance.now()) : Date.now();
+      t4 = (typeof performance !== "undefined" && performance.timeOrigin) ? (performance.timeOrigin + performance.now()) : Date.now();
+      sessionStorage.setItem("scrap_finalize_perf", JSON.stringify({ t0, t1, t2, t3, t4 }));
     } catch (e) {
       console.error("[app.js] Failed to save completion state to sessionStorage:", e);
     }
