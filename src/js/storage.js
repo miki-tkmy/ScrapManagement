@@ -211,12 +211,65 @@ function getAllEmployeePreferencesCache() {
   }
 }
 
+// V3.10: 単一集約 Normalizer (API 形状と内部 Canonical 形状の相互互換保証)
+function normalizeEmployeePreference(pref) {
+  if (!pref || typeof pref !== "object") {
+    return {
+      exists: false,
+      categories: DEFAULT_29_CATEGORIES.slice(),
+      revision: 0,
+      updatedAt: null
+    };
+  }
+
+  const exists = pref.exists === true;
+
+  // categories 抽出: pref.categories (内部 Canonical 形式) または pref.selectedMaterialCategories (API 形式)
+  let rawCats = null;
+  if (Array.isArray(pref.categories)) {
+    rawCats = pref.categories;
+  } else if (Array.isArray(pref.selectedMaterialCategories)) {
+    rawCats = pref.selectedMaterialCategories;
+  }
+
+  // revision 抽出: pref.revision (内部 Canonical 形式) または pref.preferenceRevision (API 形式)
+  let rev = 0;
+  if (typeof pref.revision === "number" && Number.isFinite(pref.revision)) {
+    rev = pref.revision;
+  } else if (typeof pref.preferenceRevision === "number" && Number.isFinite(pref.preferenceRevision)) {
+    rev = pref.preferenceRevision;
+  }
+
+  const updatedAt = pref.updatedAt ? String(pref.updatedAt) : null;
+
+  if (!exists) {
+    return {
+      exists: false,
+      categories: DEFAULT_29_CATEGORIES.slice(),
+      revision: rev,
+      updatedAt: updatedAt
+    };
+  }
+
+  // exists === true の場合:
+  // rawCats が配列なら (空配列 [] を含め) そのまま保持。配列でない場合は空配列 []
+  const categories = Array.isArray(rawCats) ? rawCats.slice() : [];
+
+  return {
+    exists: true,
+    categories: categories,
+    revision: rev,
+    updatedAt: updatedAt
+  };
+}
+
 function getEmployeePreferences(empNo) {
   if (!empNo) {
     return {
       exists: false,
       categories: DEFAULT_29_CATEGORIES.slice(),
       revision: 0,
+      updatedAt: null,
       cachedAt: null
     };
   }
@@ -224,10 +277,12 @@ function getEmployeePreferences(empNo) {
   const allCache = getAllEmployeePreferencesCache();
   if (allCache && allCache[cleanEmpNo]) {
     const rec = allCache[cleanEmpNo];
+    const normalized = normalizeEmployeePreference(rec);
     return {
-      exists: true,
-      categories: Array.isArray(rec.categories) ? rec.categories : [],
-      revision: typeof rec.revision === "number" ? rec.revision : 1,
+      exists: normalized.exists,
+      categories: normalized.categories,
+      revision: normalized.revision,
+      updatedAt: normalized.updatedAt,
       cachedAt: rec.cachedAt || null
     };
   }
@@ -235,6 +290,7 @@ function getEmployeePreferences(empNo) {
     exists: false,
     categories: DEFAULT_29_CATEGORIES.slice(),
     revision: 0,
+    updatedAt: null,
     cachedAt: null
   };
 }
@@ -242,14 +298,17 @@ function getEmployeePreferences(empNo) {
 function saveEmployeePreferences(empNo, pref) {
   if (!empNo) return;
   const cleanEmpNo = String(empNo).trim().toUpperCase();
+  const normalized = normalizeEmployeePreference(pref);
   const allCache = getAllEmployeePreferencesCache();
-  const cats = (pref && Array.isArray(pref.categories)) ? pref.categories : [];
-  const rev = (pref && typeof pref.revision === "number") ? pref.revision : 1;
+
   allCache[cleanEmpNo] = {
-    categories: cats,
-    revision: rev,
+    exists: normalized.exists,
+    categories: normalized.categories,
+    revision: normalized.revision,
+    updatedAt: normalized.updatedAt,
     cachedAt: new Date().toISOString()
   };
+
   try {
     localStorage.setItem(TERMINAL_STORAGE_KEYS.EMPLOYEE_PREFERENCES, JSON.stringify(allCache));
   } catch (e) {}
@@ -257,7 +316,7 @@ function saveEmployeePreferences(empNo, pref) {
   // アクティブ社員なら USER_SETTINGS の selectedMaterialCategories も同期
   const settings = getUserSettings();
   if (settings.employeeNo && String(settings.employeeNo).trim().toUpperCase() === cleanEmpNo) {
-    saveSelectedMaterialCategories(cats);
+    saveSelectedMaterialCategories(normalized.categories);
   }
 }
 
@@ -618,6 +677,7 @@ if (typeof module !== "undefined" && module.exports) {
     DEFAULT_29_CATEGORIES,
     DEFAULT_66_CATEGORIES,
     getAllEmployeePreferencesCache,
+    normalizeEmployeePreference,
     getEmployeePreferences,
     saveEmployeePreferences
   };
@@ -636,6 +696,7 @@ if (typeof window !== "undefined") {
     DEFAULT_29_CATEGORIES,
     DEFAULT_66_CATEGORIES,
     getAllEmployeePreferencesCache,
+    normalizeEmployeePreference,
     getEmployeePreferences,
     saveEmployeePreferences,
     getPreviousInput,

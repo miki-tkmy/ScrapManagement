@@ -344,9 +344,13 @@ function initUserSettings() {
     gasClient.lookupEmployee(resolvedEmployeeNo).then(res => {
       if (res && res.success && res.preference) {
         const cachedPref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
-        if (!cachedPref.exists || cachedPref.revision !== res.preference.preferenceRevision) {
+        const serverRev = typeof res.preference.preferenceRevision === "number"
+          ? res.preference.preferenceRevision
+          : (typeof res.preference.revision === "number" ? res.preference.revision : 0);
+        if (!cachedPref.exists || cachedPref.revision !== serverRev) {
           TerminalStorage.saveEmployeePreferences(resolvedEmployeeNo, res.preference);
-          window.ACTIVE_ITEMS = applyMaterialCategoryFilter(window.ACTIVE_ALL_ITEMS || [], res.preference.selectedMaterialCategories);
+          const activePref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
+          window.ACTIVE_ITEMS = applyMaterialCategoryFilter(window.ACTIVE_ALL_ITEMS || [], activePref.categories);
           renderSettingsView();
         }
       }
@@ -2824,8 +2828,9 @@ function saveCategoryPreferences() {
         gasClient.lookupEmployee(resolvedEmployeeNo).then(latestRes => {
           if (latestRes && latestRes.preference) {
             TerminalStorage.saveEmployeePreferences(resolvedEmployeeNo, latestRes.preference);
+            const activePref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
             renderSettingsView();
-            window.ACTIVE_ITEMS = applyMaterialCategoryFilter(window.ACTIVE_ALL_ITEMS || [], latestRes.preference.selectedMaterialCategories);
+            window.ACTIVE_ITEMS = applyMaterialCategoryFilter(window.ACTIVE_ALL_ITEMS || [], activePref.categories);
           }
         });
       } else {
