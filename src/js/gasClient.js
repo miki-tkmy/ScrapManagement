@@ -14,12 +14,14 @@ class GasClient {
     this.endpointUrl = (endpointUrl === "MOCK" ? "" : (endpointUrl || configUrl));
 
     const env = options.environment || config.environment || "STAGING";
+    const urlHasMock = (typeof window !== "undefined" && window.location && window.location.search && window.location.search.includes("mode=MOCK"));
     // 明示的なテスト/モック指定のみ MOCK 許可
     this.isMockMode = (
       endpointUrl === "MOCK" ||
       options.mode === "MOCK" ||
       options.isMock === true ||
       env === "LOCAL_TEST" ||
+      urlHasMock ||
       (typeof window !== "undefined" && window.USE_MOCK === true)
     );
     this.isUnconfiguredStaging = (env === "STAGING" && !this.endpointUrl && !this.isMockMode);
@@ -41,6 +43,20 @@ class GasClient {
       slipCountRevisions: {},
       materialSummaryRevisions: {},
       summaryRevisions: {}
+    };
+
+    // MOCK 用 社員別資材カテゴリ設定 (V3.10)
+    this._mockPreferences = {
+      "E00001": {
+        exists: true,
+        selectedMaterialCategories: [
+          "IQ", "AN", "AJ", "AY", "AZ", "BA", "BC", "CA", "DS", "EA",
+          "GK", "H3", "H6", "HA", "HS", "KK", "PC", "PP", "QB", "RT",
+          "SA", "SS", "UA", "UG", "VM", "YT", "YU", "ZZ", "__UNGROUPED__"
+        ],
+        preferenceRevision: 1,
+        updatedAt: new Date().toISOString()
+      }
     };
   }
 
@@ -256,6 +272,14 @@ class GasClient {
       const bName = emp.baseName ? String(emp.baseName).trim() : "";
       const baseSelectionRequired = (!bCode);
 
+      if (!this._mockPreferences) this._mockPreferences = {};
+      const mockPref = this._mockPreferences[cleanEmpNo] || {
+        exists: false,
+        selectedMaterialCategories: [],
+        preferenceRevision: 0,
+        updatedAt: null
+      };
+
       return {
         success: true,
         mode: "MOCK",
@@ -266,7 +290,13 @@ class GasClient {
           baseName: bName,
           baseSelectionRequired: baseSelectionRequired,
           updatedAt: new Date().toISOString()
-        })
+        }),
+        preference: {
+          exists: mockPref.exists,
+          selectedMaterialCategories: (mockPref.selectedMaterialCategories || []).slice(),
+          preferenceRevision: mockPref.preferenceRevision || 0,
+          updatedAt: mockPref.updatedAt || null
+        }
       };
     }
 
@@ -710,6 +740,97 @@ class GasClient {
       return data;
     } catch (e) {
       console.error("[gasClient] deleteDraft failed:", e);
+      return {
+        success: false,
+        mode: "GAS_STAGING",
+        error: "STAGING_BACKEND_UNAVAILABLE",
+        message: e.message
+      };
+    }
+  }
+
+  // 10.5. 社員別資材カテゴリ設定保存 (POST action=savePreferences) - V3.10
+  async saveEmployeePreferences(empNo, categories, expectedRevision) {
+    if (!empNo) {
+      return { success: false, error: "MISSING_EMP_NO", message: "社員番号が指定されていません。" };
+    }
+    const cleanEmpNo = String(empNo).trim().toUpperCase();
+    const cats = Array.isArray(categories) ? categories : [];
+
+    if (this.isMockMode) {
+      if (!this._mockPreferences) this._mockPreferences = {};
+      const current = this._mockPreferences[cleanEmpNo];
+      const currentRev = (current && typeof current.preferenceRevision === "number") ? current.preferenceRevision : 0;
+
+      // 楽観的排他制御 (expectedRevision 指定時)
+      if (expectedRevision !== undefined && expectedRevision !== null && expectedRevision !== currentRev) {
+        return {
+          success: false,
+          mode: "MOCK",
+          error: "PREFERENCE_REVISION_CONFLICT",
+          message: "別の端末で設定が更新されています。最新設定を再取得してください。",
+          currentRevision: currentRev
+        };
+      }
+
+      const newRev = currentRev + 1;
+      const nowIso = new Date().toISOString();
+      this._mockPreferences[cleanEmpNo] = {
+        exists: true,
+        selectedMaterialCategories: cats.slice(),
+        preferenceRevision: newRev,
+        updatedAt: nowIso
+      };
+
+      return {
+        success: true,
+        mode: "MOCK",
+        employeeNo: cleanEmpNo,
+        preferenceRevision: newRev,
+        selectedMaterialCategories: cats.slice(),
+        updatedAt: nowIso
+      };
+    }
+
+    if (this.isUnconfiguredStaging) {
+      return {
+        success: false,
+        mode: "STAGING_UNCONFIGURED",
+        error: "STAGING_ENDPOINT_NOT_CONFIGURED",
+        message: "STAGING Web App URL is not configured in src/js/config.js. Cannot save preferences."
+      };
+    }
+
+    try {
+      const resp = await fetch(this.endpointUrl, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: JSON.stringify({
+          action: "savePreferences",
+          payload: {
+            employeeNo: cleanEmpNo,
+            selectedMaterialCategories: cats,
+            expectedPreferenceRevision: expectedRevision
+          }
+        })
+      });
+
+      if (resp.status === 409) {
+        const errData = await resp.json().catch(() => ({}));
+        return {
+          success: false,
+          mode: "GAS_STAGING",
+          error: "PREFERENCE_REVISION_CONFLICT",
+          message: errData.message || "別の端末で設定が更新されています。最新設定を再取得してください。"
+        };
+      }
+
+      if (!resp.ok) throw new Error(`HTTP Error: ${resp.status}`);
+      const data = await resp.json();
+      data.mode = "GAS_STAGING";
+      return data;
+    } catch (e) {
+      console.error("[gasClient] saveEmployeePreferences failed:", e);
       return {
         success: false,
         mode: "GAS_STAGING",

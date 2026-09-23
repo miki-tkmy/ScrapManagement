@@ -16,6 +16,29 @@
     </div>
   </header>
 
+  <!-- V3.10: 非ブロッキング マスタ同期ステータスバー (Cache Hit / Background Update 用) -->
+  <div id="master-status-bar" class="master-status-bar no-print" style="display:none;" role="status" aria-live="polite">
+    <div class="master-status-inner">
+      <span class="status-spinner-sm" id="master-status-spinner"></span>
+      <span id="master-status-text">最新データを確認中…</span>
+    </div>
+  </div>
+
+  <!-- V3.10: 初回読み込み用 ブロッキング ローディングオーバーレイ (Cache なし時のみ) -->
+  <div id="master-loading-overlay" class="master-loading-overlay no-print" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="loading-title">
+    <div class="loading-card">
+      <h2 id="loading-title" class="loading-title">資材データを準備しています</h2>
+      <p id="loading-message" class="loading-message">最新資材データを取得しています…</p>
+      <div class="progress-bar-container" id="loading-progress-container" role="progressbar" aria-busy="true" aria-valuemin="0" aria-valuemax="100">
+        <div class="progress-bar-fill indeterminate"></div>
+      </div>
+      <div id="loading-error-actions" style="display:none; margin-top:1.25rem;">
+        <p id="loading-error-text" style="color:var(--color-danger); font-size:0.875rem; margin-bottom:1rem;"></p>
+        <button type="button" class="btn btn-primary" id="btn-loading-retry" onclick="retryFetchMasters()" style="width:100%;">再試行</button>
+      </div>
+    </div>
+  </div>
+
   <!-- メインコンテンツ -->
   <main class="main-container no-print">
     <!-- タブナビゲーション (通常利用者向け: 伝票入力 / 履歴 / 集計 / 設定) -->

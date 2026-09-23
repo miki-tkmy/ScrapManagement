@@ -56,17 +56,93 @@ if (typeof document !== "undefined") {
   });
 }
 
-// カテゴリフィルタリング用ヘルパー (CASE A: 全品からローカル抽出)
-function applyMaterialCategoryFilter(allItems, selectedCategories) {
-  if (!allItems || !Array.isArray(allItems)) return [];
-  if (!selectedCategories || selectedCategories.length === 0) return allItems;
-  return allItems.filter(it => {
-    const cat = it.categoryCode || it.category;
-    return !cat || selectedCategories.includes(cat);
-  });
+// V3.10: 資材グループキー解決ヘルパー (NULL / 空文字は仮想グループ __UNGROUPED__ へ投影)
+function getMaterialCategoryKey(item) {
+  if (!item) return "__UNGROUPED__";
+  const cat = (item.groupCode || item.categoryCode || item.category || "").trim();
+  return cat ? cat : "__UNGROUPED__";
 }
 
-// 1. GAS クライアント初期化 & マスタ同期 (全品キャッシュ & ローカルカテゴリフィルタ & リビジョンキャッシュ)
+// V3.10: カテゴリフィルタリング用ヘルパー (全品からローカル抽出、空配列 [] は全除外)
+function applyMaterialCategoryFilter(allItems, selectedCategories) {
+  if (!allItems || !Array.isArray(allItems)) return [];
+  const allowed = Array.isArray(selectedCategories) ? selectedCategories : (TerminalStorage.DEFAULT_29_CATEGORIES || []);
+  const set = new Set(allowed);
+  return allItems.filter(it => set.has(getMaterialCategoryKey(it)));
+}
+
+// V3.10: マスタローディング & ステータスバー UX 制御
+let masterStatusTimer = null;
+
+function showMasterStatusBar(message, isLoading = true) {
+  if (typeof document === "undefined") return;
+  const bar = document.getElementById("master-status-bar");
+  const text = document.getElementById("master-status-text");
+  const spinner = document.getElementById("master-status-spinner");
+  if (!bar || !text) return;
+  if (masterStatusTimer) {
+    clearTimeout(masterStatusTimer);
+    masterStatusTimer = null;
+  }
+  text.textContent = message;
+  if (spinner) spinner.style.display = isLoading ? "inline-block" : "none";
+  bar.style.display = "block";
+}
+
+function hideMasterStatusBar(delayMs = 0) {
+  if (typeof document === "undefined") return;
+  if (masterStatusTimer) {
+    clearTimeout(masterStatusTimer);
+    masterStatusTimer = null;
+  }
+  if (delayMs > 0) {
+    masterStatusTimer = setTimeout(() => {
+      const bar = document.getElementById("master-status-bar");
+      if (bar) bar.style.display = "none";
+      masterStatusTimer = null;
+    }, delayMs);
+  } else {
+    const bar = document.getElementById("master-status-bar");
+    if (bar) bar.style.display = "none";
+  }
+}
+
+function showMasterLoadingOverlay() {
+  if (typeof document === "undefined") return;
+  const overlay = document.getElementById("master-loading-overlay");
+  const progress = document.getElementById("loading-progress-container");
+  const errActions = document.getElementById("loading-error-actions");
+  if (!overlay) return;
+  overlay.style.display = "flex";
+  if (progress) progress.style.display = "block";
+  if (errActions) errActions.style.display = "none";
+}
+
+function hideMasterLoadingOverlay() {
+  if (typeof document === "undefined") return;
+  const overlay = document.getElementById("master-loading-overlay");
+  if (overlay) overlay.style.display = "none";
+}
+
+function showMasterLoadingError(message) {
+  if (typeof document === "undefined") return;
+  const overlay = document.getElementById("master-loading-overlay");
+  const progress = document.getElementById("loading-progress-container");
+  const errActions = document.getElementById("loading-error-actions");
+  const errText = document.getElementById("loading-error-text");
+  if (!overlay) return;
+  overlay.style.display = "flex";
+  if (progress) progress.style.display = "none";
+  if (errActions) errActions.style.display = "block";
+  if (errText) errText.textContent = message || "資材データの取得に失敗しました。";
+}
+
+function retryFetchMasters() {
+  showMasterLoadingOverlay();
+  fetchAndApplyMasters(1);
+}
+
+// 1. GAS クライアント初期化 & マスタ同期 (SWR & ローディング UX)
 function initGasClient() {
   gasClient = new GasClient();
   updateNetworkStatus();
@@ -74,11 +150,19 @@ function initGasClient() {
   // Fast Path: マスタキャッシュ (localStorage) があれば即時復元して画面操作可能へ
   const cachedMasters = TerminalStorage.getMasterCache();
   const userSettings = TerminalStorage.getUserSettings();
+  const activeEmpNo = userSettings.employeeNo;
+  const empPref = activeEmpNo ? TerminalStorage.getEmployeePreferences(activeEmpNo) : null;
+  const currentCategories = (empPref && empPref.exists)
+    ? empPref.categories
+    : (Array.isArray(userSettings.selectedMaterialCategories) && userSettings.selectedMaterialCategories.length > 0
+        ? userSettings.selectedMaterialCategories
+        : (TerminalStorage.DEFAULT_29_CATEGORIES || []));
+
   if (cachedMasters && cachedMasters.bases && cachedMasters.bases.length > 0) {
     window.ACTIVE_BASES = cachedMasters.bases;
     const allItems = cachedMasters.allItems || cachedMasters.items || [];
     window.ACTIVE_ALL_ITEMS = allItems;
-    window.ACTIVE_ITEMS = applyMaterialCategoryFilter(allItems, userSettings.selectedMaterialCategories);
+    window.ACTIVE_ITEMS = applyMaterialCategoryFilter(allItems, currentCategories);
     if (cachedMasters.fixedItems && cachedMasters.fixedItems.length > 0) {
       window.ACTIVE_FIXED_ITEMS = cachedMasters.fixedItems;
       initFixedItemsList();
@@ -86,6 +170,11 @@ function initGasClient() {
     if (cachedMasters.categories && cachedMasters.categories.length > 0) {
       window.AVAILABLE_CATEGORIES = cachedMasters.categories;
     }
+    // 非ブロッキング小型表示: 最新データを確認中…
+    showMasterStatusBar("最新データを確認中…", true);
+  } else {
+    // First Load: ブロッキング ローディング UI (架空%なし)
+    showMasterLoadingOverlay();
   }
 
   // バックグラウンドで State / MasterRevision を確認
@@ -101,6 +190,7 @@ function checkMasterRevisionAndUpdate() {
   const existingSnapshot = TerminalStorage.getStateSnapshot(baseCode);
   if (existingSnapshot && existingSnapshot.masterRevision !== undefined && TerminalStorage.isStateSnapshotFresh(baseCode)) {
     if (cachedMasters && existingSnapshot.masterRevision === cachedRev) {
+      hideMasterStatusBar(300);
       return;
     }
   }
@@ -112,25 +202,44 @@ function checkMasterRevisionAndUpdate() {
     const serverMasterRev = (stateRes && stateRes.success && stateRes.masterRevision) ? stateRes.masterRevision : null;
     // キャッシュなし、または MasterRevision が更新されている場合のみ fetchMasters を実行
     if (!cachedMasters || serverMasterRev === null || serverMasterRev !== cachedRev) {
+      if (cachedMasters) {
+        showMasterStatusBar("資材データを更新中…", true);
+      }
       fetchAndApplyMasters(serverMasterRev || 1);
+    } else {
+      hideMasterStatusBar(400);
     }
   }).catch(() => {
     if (!cachedMasters) {
       fetchAndApplyMasters(1);
+    } else {
+      showMasterStatusBar("最新データを取得できませんでした。保存済みデータを使用しています", false);
+      hideMasterStatusBar(4000);
     }
   });
 }
 
 function fetchAndApplyMasters(targetRevision = 1) {
-  const userSettings = TerminalStorage.getUserSettings();
+  const cachedMasters = TerminalStorage.getMasterCache();
 
   // CASE A: 全品マスタを取得し、ローカルでフィルタリングする
   gasClient.fetchMasters({}).then(res => {
+    hideMasterLoadingOverlay();
     if (res && res.success) {
       if (Array.isArray(res.bases) && res.bases.length > 0) window.ACTIVE_BASES = res.bases;
       const allItems = Array.isArray(res.items) ? res.items : [];
       window.ACTIVE_ALL_ITEMS = allItems;
-      window.ACTIVE_ITEMS = applyMaterialCategoryFilter(allItems, userSettings.selectedMaterialCategories);
+
+      const userSettings = TerminalStorage.getUserSettings();
+      const activeEmpNo = userSettings.employeeNo;
+      const empPref = activeEmpNo ? TerminalStorage.getEmployeePreferences(activeEmpNo) : null;
+      const currentCategories = (empPref && empPref.exists)
+        ? empPref.categories
+        : (Array.isArray(userSettings.selectedMaterialCategories) && userSettings.selectedMaterialCategories.length > 0
+            ? userSettings.selectedMaterialCategories
+            : (TerminalStorage.DEFAULT_29_CATEGORIES || []));
+
+      window.ACTIVE_ITEMS = applyMaterialCategoryFilter(allItems, currentCategories);
       if (Array.isArray(res.fixedItems) && res.fixedItems.length > 0) {
         window.ACTIVE_FIXED_ITEMS = res.fixedItems;
         initFixedItemsList();
@@ -146,8 +255,34 @@ function fetchAndApplyMasters(targetRevision = 1) {
         fixedItems: window.ACTIVE_FIXED_ITEMS,
         categories: window.AVAILABLE_CATEGORIES
       }, targetRevision);
+
+      if (cachedMasters) {
+        showMasterStatusBar("最新データに更新しました", false);
+        hideMasterStatusBar(2500);
+      } else {
+        hideMasterStatusBar(0);
+      }
     } else if (gasClient.getMode() === "GAS_STAGING") {
       console.warn("[app.js] STAGING Backend masters unavailable:", res ? res.error : "Unknown");
+      if (cachedMasters) {
+        showMasterStatusBar("最新データを取得できませんでした。保存済みデータを使用しています", false);
+        hideMasterStatusBar(4000);
+      } else {
+        showMasterLoadingError("資材データの取得に失敗しました。電波の良い場所で再試行してください。");
+      }
+    } else {
+      if (!cachedMasters) {
+        showMasterLoadingError("資材データの取得に失敗しました。");
+      }
+    }
+  }).catch(err => {
+    hideMasterLoadingOverlay();
+    console.error("[app.js] fetchMasters failed:", err);
+    if (cachedMasters) {
+      showMasterStatusBar("最新データを取得できませんでした。保存済みデータを使用しています", false);
+      hideMasterStatusBar(4000);
+    } else {
+      showMasterLoadingError("資材データの取得に失敗しました。電波の良い場所で再試行してください。");
     }
   });
 }
@@ -195,9 +330,27 @@ function initUserSettings() {
       statusEl.innerHTML = `<span style="color:var(--color-success); font-weight:bold;">✓ 社員登録済み (${resolvedEmployeeName} / ${assignedEmployeeBaseName || "未所属"})</span>`;
     }
 
+    // V3.10 SWR: 社員別 Preference をローカルキャッシュから即時適用
+    const empPref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
+    if (empPref && empPref.exists) {
+      window.ACTIVE_ITEMS = applyMaterialCategoryFilter(window.ACTIVE_ALL_ITEMS || [], empPref.categories);
+    }
+
     // 伝票入力画面のロック & UI反映
     applyEmployeeLockToForm();
     hideEmployeeUnconfiguredBanner();
+
+    // V3.10 SWR: バックグラウンドで最新 Preference リビジョンを確認
+    gasClient.lookupEmployee(resolvedEmployeeNo).then(res => {
+      if (res && res.success && res.preference) {
+        const cachedPref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
+        if (!cachedPref.exists || cachedPref.revision !== res.preference.preferenceRevision) {
+          TerminalStorage.saveEmployeePreferences(resolvedEmployeeNo, res.preference);
+          window.ACTIVE_ITEMS = applyMaterialCategoryFilter(window.ACTIVE_ALL_ITEMS || [], res.preference.selectedMaterialCategories);
+          renderSettingsView();
+        }
+      }
+    }).catch(() => {});
   } else {
     // 社員未設定状態を維持
     resolvedEmployeeNo = "";
@@ -614,6 +767,14 @@ function verifyAndSaveEmployee() {
         baseSelectionRequired: (!assignedEmployeeBaseCode),
         lastVerifiedAt: new Date().toISOString()
       });
+
+      // V3.10: 1 Round Trip で同梱された Preference を保存 & 即時反映
+      if (res.preference) {
+        TerminalStorage.saveEmployeePreferences(resolvedEmployeeNo, res.preference);
+      }
+      const activePref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
+      window.ACTIVE_ITEMS = applyMaterialCategoryFilter(window.ACTIVE_ALL_ITEMS || [], activePref.categories);
+      renderSettingsView();
 
       // 拠点・社員変更に伴い全キャッシュを破棄
       TerminalStorage.invalidateAllCaches();
@@ -2538,25 +2699,53 @@ function renderSettingsView() {
   const fixedContainer = document.getElementById("setting-fixed-items-container");
   const userSettings = TerminalStorage.getUserSettings();
 
-  // カテゴリチェックボックス
+  // カテゴリチェックボックス (V3.10: 全66カテゴリ、DisplayOrder ASC、最後がグループ無し)
   if (catContainer) {
     catContainer.innerHTML = "";
-    const cats = window.AVAILABLE_CATEGORIES || [
-      { categoryCode: "PIPE", categoryName: "単管" },
-      { categoryCode: "BRACKET", categoryName: "金具" },
-      { categoryCode: "NEXTGEN", categoryName: "次世代" },
-      { categoryCode: "FRAME", categoryName: "枠組" },
-      { categoryCode: "IQ", categoryName: "IQ" }
-    ];
-    const selectedCats = userSettings.selectedMaterialCategories || [];
+    const baseCats = (typeof TerminalStorage !== "undefined" && TerminalStorage.DEFAULT_66_CATEGORIES)
+      ? TerminalStorage.DEFAULT_66_CATEGORIES.slice()
+      : [
+          { categoryCode: "IQ", categoryName: "Ｉｑシステム", displayOrder: 340 },
+          { categoryCode: "AN", categoryName: "セイフティウォーク", displayOrder: 90 },
+          { categoryCode: "CA", categoryName: "クランプ", displayOrder: 210 },
+          { categoryCode: "__UNGROUPED__", categoryName: "グループ無し", displayOrder: 660 }
+        ];
 
-    cats.forEach(c => {
-      const isChecked = selectedCats.length === 0 || selectedCats.includes(c.categoryCode);
+    // ソート: DisplayOrder ASC (最後がグループ無し)
+    baseCats.sort((a, b) => (a.displayOrder || 999) - (b.displayOrder || 999));
+
+    // 選択状態の判定
+    let isCodeSelected;
+    if (resolvedEmployeeNo) {
+      const pref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
+      if (pref.exists) {
+        // Preference が存在する場合: [] なら全未チェック
+        const selSet = new Set(pref.categories || []);
+        isCodeSelected = (code) => selSet.has(code);
+      } else {
+        // Preference レコード不存在: DEFAULT 29
+        const selSet = new Set(TerminalStorage.DEFAULT_29_CATEGORIES || []);
+        isCodeSelected = (code) => selSet.has(code);
+      }
+    } else {
+      const selCats = Array.isArray(userSettings.selectedMaterialCategories) && userSettings.selectedMaterialCategories.length > 0
+        ? userSettings.selectedMaterialCategories
+        : (TerminalStorage.DEFAULT_29_CATEGORIES || []);
+      const selSet = new Set(selCats);
+      isCodeSelected = (code) => selSet.has(code);
+    }
+
+    baseCats.forEach(c => {
+      const isChecked = isCodeSelected(c.categoryCode);
       const label = document.createElement("label");
       label.className = "checkbox-label";
+      const displayLabel = c.categoryCode === "__UNGROUPED__"
+        ? `${c.categoryName}`
+        : `${c.categoryName} (${c.categoryCode})`;
+
       label.innerHTML = `
         <input type="checkbox" name="material-cat" value="${c.categoryCode}" ${isChecked ? "checked" : ""}>
-        <span>${c.categoryName} (${c.categoryCode})</span>
+        <span>${displayLabel}</span>
       `;
       catContainer.appendChild(label);
     });
@@ -2584,10 +2773,16 @@ function renderSettingsView() {
 }
 
 function saveCategoryPreferences() {
-  const checked = Array.from(document.querySelectorAll('input[name="material-cat"]:checked')).map(el => el.value);
-  TerminalStorage.saveUserSettings({ selectedMaterialCategories: checked });
+  const saveBtn = (typeof document !== "undefined") ? (document.querySelector('button[onclick="saveCategoryPreferences()"]') || document.getElementById("btn-save-categories")) : null;
+  const origBtnText = saveBtn ? saveBtn.textContent : "";
+  if (saveBtn) {
+    saveBtn.textContent = "保存中…";
+    saveBtn.disabled = true;
+  }
 
-  // CASE A: ネットワーク通信なし (通信 0) で allItems から即座にローカル再フィルタ
+  const checked = (typeof document !== "undefined") ? Array.from(document.querySelectorAll('input[name="material-cat"]:checked')).map(el => el.value) : [];
+
+  // V3.10 CASE A: ネットワーク通信なし (通信 0) で allItems から即座にローカル再フィルタ
   const cachedMasters = TerminalStorage.getMasterCache();
   const allItems = window.ACTIVE_ALL_ITEMS || (cachedMasters && (cachedMasters.allItems || cachedMasters.items)) || [];
   window.ACTIVE_ITEMS = applyMaterialCategoryFilter(allItems, checked);
@@ -2603,7 +2798,61 @@ function saveCategoryPreferences() {
     }, cachedMasters.masterRevision || 1);
   }
 
-  showAppModal({ title: "設定保存", message: "使用資材カテゴリを更新しました。" });
+  if (resolvedEmployeeNo) {
+    const currentPref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
+    const expectedRev = currentPref.exists ? currentPref.revision : 0;
+
+    gasClient.saveEmployeePreferences(resolvedEmployeeNo, checked, expectedRev).then(res => {
+      if (saveBtn) {
+        saveBtn.textContent = origBtnText;
+        saveBtn.disabled = false;
+      }
+      if (res && res.success) {
+        TerminalStorage.saveEmployeePreferences(resolvedEmployeeNo, {
+          exists: true,
+          categories: checked,
+          revision: res.preferenceRevision,
+          updatedAt: res.updatedAt
+        });
+        showAppModal({ title: "設定保存", message: "使用資材カテゴリを更新しました。" });
+      } else if (res && res.error === "PREFERENCE_REVISION_CONFLICT") {
+        showAppModal({
+          title: "設定競合",
+          message: "別の端末で設定が更新されています。最新設定を再取得します。"
+        });
+        // 最新設定を再取得して再描画
+        gasClient.lookupEmployee(resolvedEmployeeNo).then(latestRes => {
+          if (latestRes && latestRes.preference) {
+            TerminalStorage.saveEmployeePreferences(resolvedEmployeeNo, latestRes.preference);
+            renderSettingsView();
+            window.ACTIVE_ITEMS = applyMaterialCategoryFilter(window.ACTIVE_ALL_ITEMS || [], latestRes.preference.selectedMaterialCategories);
+          }
+        });
+      } else {
+        showAppModal({
+          title: "保存エラー",
+          message: res ? (res.message || res.error) : "設定の中央保存に失敗しました。"
+        });
+      }
+    }).catch(err => {
+      if (saveBtn) {
+        saveBtn.textContent = origBtnText;
+        saveBtn.disabled = false;
+      }
+      showAppModal({
+        title: "通信エラー",
+        message: "中央サーバーへの保存に失敗しました。電波の良い場所で再度お試しください。"
+      });
+    });
+  } else {
+    // 社員未設定時はローカルのみ保存
+    TerminalStorage.saveUserSettings({ selectedMaterialCategories: checked });
+    if (saveBtn) {
+      saveBtn.textContent = origBtnText;
+      saveBtn.disabled = false;
+    }
+    showAppModal({ title: "設定保存", message: "使用資材カテゴリを更新しました。" });
+  }
 }
 
 function saveFixedItemPreferences() {
@@ -2702,7 +2951,14 @@ if (typeof module !== "undefined" && module.exports) {
     showEmployeeUnconfiguredBanner,
     hideEmployeeUnconfiguredBanner,
     applyMaterialCategoryFilter,
+    getMaterialCategoryKey,
     saveCategoryPreferences,
+    showMasterStatusBar,
+    hideMasterStatusBar,
+    showMasterLoadingOverlay,
+    hideMasterLoadingOverlay,
+    showMasterLoadingError,
+    retryFetchMasters,
     fetchAndApplyMasters,
     getPrintQuantityDisplay,
     checkIfSlipAffectsSummary,

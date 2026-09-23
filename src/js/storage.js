@@ -9,8 +9,85 @@ const TERMINAL_STORAGE_KEYS = {
   PREVIOUS_INPUT: "scrap_terminal_previous_input",
   LOCAL_TEMP_DRAFT: "scrap_terminal_local_draft",
   SETTINGS: "scrap_app_settings",
-  USER_SETTINGS: "scrap_user_settings"
+  USER_SETTINGS: "scrap_user_settings",
+  EMPLOYEE_PREFERENCES: "scrap_emp_preferences"
 };
+
+// V3.10: 初期カテゴリセット (実28グループ + 仮想1グループ = 計29カテゴリ)
+const DEFAULT_29_CATEGORIES = [
+  "IQ", "AN", "AJ", "AY", "AZ", "BA", "BC", "CA", "DS", "EA", "GK", "H3", "H6", "HA", "HS",
+  "KK", "PC", "PP", "QB", "RT", "SA", "SS", "UA", "UG", "VM", "YT", "YU", "ZZ", "__UNGROUPED__"
+];
+
+// V3.10: 全66カテゴリ定義 (65実グループ + 仮想1グループ、DisplayOrder ASC、最後がグループ無し)
+const DEFAULT_66_CATEGORIES = [
+  { categoryCode: "A1", categoryName: "建枠６００ＳＪ", displayOrder: 10 },
+  { categoryCode: "A2", categoryName: "建枠９００ＳＪ", displayOrder: 20 },
+  { categoryCode: "A3", categoryName: "建枠１２００ＳＪ", displayOrder: 30 },
+  { categoryCode: "AA", categoryName: "建枠その他", displayOrder: 40 },
+  { categoryCode: "AB", categoryName: "スジカイ", displayOrder: 50 },
+  { categoryCode: "AC", categoryName: "鋼製板", displayOrder: 60 },
+  { categoryCode: "AH", categoryName: "梁枠", displayOrder: 70 },
+  { categoryCode: "AJ", categoryName: "ジャッキベース", displayOrder: 80 },
+  { categoryCode: "AN", categoryName: "セイフティウォーク", displayOrder: 90 },
+  { categoryCode: "AT", categoryName: "手摺", displayOrder: 100 },
+  { categoryCode: "AU", categoryName: "手摺柱", displayOrder: 110 },
+  { categoryCode: "AW", categoryName: "梁渡し", displayOrder: 120 },
+  { categoryCode: "AY", categoryName: "養生金網・防音パネル", displayOrder: 130 },
+  { categoryCode: "AZ", categoryName: "カイダン", displayOrder: 140 },
+  { categoryCode: "BA", categoryName: "土木その他", displayOrder: 150 },
+  { categoryCode: "BB", categoryName: "売却品", displayOrder: 160 },
+  { categoryCode: "BC", categoryName: "先行手摺・巾木類", displayOrder: 170 },
+  { categoryCode: "BD", categoryName: "バルコロード", displayOrder: 180 },
+  { categoryCode: "BL", categoryName: "売却品ＬＣ", displayOrder: 190 },
+  { categoryCode: "BO", categoryName: "売却品ＡＯＳ", displayOrder: 200 },
+  { categoryCode: "CA", categoryName: "クランプ", displayOrder: 210 },
+  { categoryCode: "CB", categoryName: "コンポ橋ブラケット", displayOrder: 220 },
+  { categoryCode: "CC", categoryName: "クラウドカメラ", displayOrder: 230 },
+  { categoryCode: "CL", categoryName: "クロスリンクステージ", displayOrder: 240 },
+  { categoryCode: "DS", categoryName: "伸縮ブラケット", displayOrder: 250 },
+  { categoryCode: "EA", categoryName: "アルミ朝顔", displayOrder: 260 },
+  { categoryCode: "EB", categoryName: "エコーバリア", displayOrder: 270 },
+  { categoryCode: "GD", categoryName: "ゴンドラ", displayOrder: 280 },
+  { categoryCode: "GK", categoryName: "脚立", displayOrder: 290 },
+  { categoryCode: "H3", categoryName: "ハイパー３Ｔ", displayOrder: 300 },
+  { categoryCode: "H6", categoryName: "ハイパー６Ｔ", displayOrder: 310 },
+  { categoryCode: "HA", categoryName: "スパイダー", displayOrder: 320 },
+  { categoryCode: "HS", categoryName: "ハイパー共通", displayOrder: 330 },
+  { categoryCode: "IQ", categoryName: "Ｉｑシステム", displayOrder: 340 },
+  { categoryCode: "KK", categoryName: "６０角バタ", displayOrder: 350 },
+  { categoryCode: "LC", categoryName: "リフトクライマー", displayOrder: 360 },
+  { categoryCode: "LL", categoryName: "ペコビーム", displayOrder: 370 },
+  { categoryCode: "MD", categoryName: "ムーバルデッキ", displayOrder: 380 },
+  { categoryCode: "OO", categoryName: "１００角バタ", displayOrder: 390 },
+  { categoryCode: "PC", categoryName: "チェーン", displayOrder: 400 },
+  { categoryCode: "PF", categoryName: "パワーフレーム", displayOrder: 410 },
+  { categoryCode: "PP", categoryName: "パイプ", displayOrder: 420 },
+  { categoryCode: "QB", categoryName: "強力サポート", displayOrder: 430 },
+  { categoryCode: "QQ", categoryName: "他・低稼働機材", displayOrder: 440 },
+  { categoryCode: "RR", categoryName: "ＲＯＲＯ足場", displayOrder: 450 },
+  { categoryCode: "RT", categoryName: "壁つなぎ", displayOrder: 460 },
+  { categoryCode: "SA", categoryName: "シート朝顔", displayOrder: 470 },
+  { categoryCode: "SB", categoryName: "スタンディングベア", displayOrder: 480 },
+  { categoryCode: "SG", categoryName: "元　他社品", displayOrder: 490 },
+  { categoryCode: "SP", categoryName: "四角支柱", displayOrder: 500 },
+  { categoryCode: "SS", categoryName: "サポート", displayOrder: 510 },
+  { categoryCode: "TD", categoryName: "タイガーダム", displayOrder: 520 },
+  { categoryCode: "TS", categoryName: "ＴＳサポート", displayOrder: 530 },
+  { categoryCode: "TT", categoryName: "敷鉄板", displayOrder: 540 },
+  { categoryCode: "UA", categoryName: "軽量鋼製板", displayOrder: 550 },
+  { categoryCode: "UG", categoryName: "木製足場板", displayOrder: 560 },
+  { categoryCode: "VA", categoryName: "Ｈ建築その他", displayOrder: 570 },
+  { categoryCode: "VD", categoryName: "Ｈ土木・型枠", displayOrder: 580 },
+  { categoryCode: "VM", categoryName: "Ｖ－ＭＡＸ", displayOrder: 590 },
+  { categoryCode: "VS", categoryName: "Ｈ支保工", displayOrder: 600 },
+  { categoryCode: "VT", categoryName: "ＨＳＴシステム", displayOrder: 610 },
+  { categoryCode: "WP", categoryName: "ワークプラットホーム", displayOrder: 620 },
+  { categoryCode: "YT", categoryName: "ＹＴロック下部材", displayOrder: 630 },
+  { categoryCode: "YU", categoryName: "ＹＴロック上部材", displayOrder: 640 },
+  { categoryCode: "ZZ", categoryName: "一般その他", displayOrder: 650 },
+  { categoryCode: "__UNGROUPED__", categoryName: "グループ無し", displayOrder: 660 }
+];
 
 const SESSION_STORAGE_KEYS = {
   WORKING_BASE_CODE: "scrap_working_base_code",
@@ -110,11 +187,78 @@ function clearUserSettings() {
 
 function getSelectedMaterialCategories() {
   const settings = getUserSettings();
-  return Array.isArray(settings.selectedMaterialCategories) ? settings.selectedMaterialCategories : [];
+  if (settings.employeeNo) {
+    const pref = getEmployeePreferences(settings.employeeNo);
+    return pref.categories;
+  }
+  return Array.isArray(settings.selectedMaterialCategories) && settings.selectedMaterialCategories.length > 0
+    ? settings.selectedMaterialCategories
+    : DEFAULT_29_CATEGORIES.slice();
 }
 
 function saveSelectedMaterialCategories(categories) {
-  saveUserSettings({ selectedMaterialCategories: Array.isArray(categories) ? categories : [] });
+  const cats = Array.isArray(categories) ? categories : [];
+  saveUserSettings({ selectedMaterialCategories: cats });
+}
+
+// 1.2 V3.10 社員別カテゴリ設定キャッシュ管理 (scrap_emp_preferences)
+function getAllEmployeePreferencesCache() {
+  try {
+    const raw = localStorage.getItem(TERMINAL_STORAGE_KEYS.EMPLOYEE_PREFERENCES);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function getEmployeePreferences(empNo) {
+  if (!empNo) {
+    return {
+      exists: false,
+      categories: DEFAULT_29_CATEGORIES.slice(),
+      revision: 0,
+      cachedAt: null
+    };
+  }
+  const cleanEmpNo = String(empNo).trim().toUpperCase();
+  const allCache = getAllEmployeePreferencesCache();
+  if (allCache && allCache[cleanEmpNo]) {
+    const rec = allCache[cleanEmpNo];
+    return {
+      exists: true,
+      categories: Array.isArray(rec.categories) ? rec.categories : [],
+      revision: typeof rec.revision === "number" ? rec.revision : 1,
+      cachedAt: rec.cachedAt || null
+    };
+  }
+  return {
+    exists: false,
+    categories: DEFAULT_29_CATEGORIES.slice(),
+    revision: 0,
+    cachedAt: null
+  };
+}
+
+function saveEmployeePreferences(empNo, pref) {
+  if (!empNo) return;
+  const cleanEmpNo = String(empNo).trim().toUpperCase();
+  const allCache = getAllEmployeePreferencesCache();
+  const cats = (pref && Array.isArray(pref.categories)) ? pref.categories : [];
+  const rev = (pref && typeof pref.revision === "number") ? pref.revision : 1;
+  allCache[cleanEmpNo] = {
+    categories: cats,
+    revision: rev,
+    cachedAt: new Date().toISOString()
+  };
+  try {
+    localStorage.setItem(TERMINAL_STORAGE_KEYS.EMPLOYEE_PREFERENCES, JSON.stringify(allCache));
+  } catch (e) {}
+
+  // アクティブ社員なら USER_SETTINGS の selectedMaterialCategories も同期
+  const settings = getUserSettings();
+  if (settings.employeeNo && String(settings.employeeNo).trim().toUpperCase() === cleanEmpNo) {
+    saveSelectedMaterialCategories(cats);
+  }
 }
 
 // 2. 前回値保持 (BaseCode, BaseName, 担当者名, スクラップ業者名)
@@ -470,8 +614,14 @@ if (typeof module !== "undefined" && module.exports) {
     invalidateAllCaches,
     getSessionWorkingBase,
     setSessionWorkingBase,
-    clearSessionWorkingBase
+    clearSessionWorkingBase,
+    DEFAULT_29_CATEGORIES,
+    DEFAULT_66_CATEGORIES,
+    getAllEmployeePreferencesCache,
+    getEmployeePreferences,
+    saveEmployeePreferences
   };
+  module.exports.TerminalStorage = module.exports;
 }
 if (typeof window !== "undefined") {
   window.TerminalStorage = {
@@ -483,6 +633,11 @@ if (typeof window !== "undefined") {
     clearSessionWorkingBase,
     getSelectedMaterialCategories,
     saveSelectedMaterialCategories,
+    DEFAULT_29_CATEGORIES,
+    DEFAULT_66_CATEGORIES,
+    getAllEmployeePreferencesCache,
+    getEmployeePreferences,
+    saveEmployeePreferences,
     getPreviousInput,
     savePreviousInput,
     getLocalDraft,
