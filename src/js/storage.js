@@ -222,8 +222,6 @@ function normalizeEmployeePreference(pref) {
     };
   }
 
-  const exists = pref.exists === true;
-
   // categories 抽出: pref.categories (内部 Canonical 形式) または pref.selectedMaterialCategories (API 形式)
   let rawCats = null;
   if (Array.isArray(pref.categories)) {
@@ -232,7 +230,18 @@ function normalizeEmployeePreference(pref) {
     rawCats = pref.selectedMaterialCategories;
   }
 
-  // revision 抽出: pref.revision (内部 Canonical 形式) または pref.preferenceRevision (API 形式)
+  // exists 判定:
+  // 1. 明示的に exists === true の場合は存在
+  // 2. 明示的に exists === false の場合は不存在
+  // 3. exists が未定義だが categories または selectedMaterialCategories が配列として与えられている場合は存在 (内部 Canonical 互換)
+  let exists = false;
+  if (pref.exists === true) {
+    exists = true;
+  } else if (pref.exists === false) {
+    exists = false;
+  } else if (rawCats !== null) {
+    exists = true;
+  }
   let rev = 0;
   if (typeof pref.revision === "number" && Number.isFinite(pref.revision)) {
     rev = pref.revision;
