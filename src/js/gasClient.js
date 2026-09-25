@@ -7,6 +7,68 @@
 // - 中央履歴 (fetchHistory), 伝票詳細 (fetchSlip), 中央集計 (fetchSummary), 社員照会 (lookupEmployee)
 // ========================================================================================
 
+const SCRAP_FRONTEND_BUILD_ID = "GATE3A5-20260925-01";
+if (typeof window !== "undefined") {
+  window.SCRAP_FRONTEND_BUILD_ID = SCRAP_FRONTEND_BUILD_ID;
+}
+
+const SCRAP_DIAGNOSTIC = {
+  buildId: SCRAP_FRONTEND_BUILD_ID,
+  environment: (typeof SCRAP_CONFIG !== "undefined" && SCRAP_CONFIG.environment) ? SCRAP_CONFIG.environment : "UNKNOWN",
+  endpointHost: (typeof SCRAP_CONFIG !== "undefined" && SCRAP_CONFIG.gasEndpoint) ? (() => {
+    try { return new URL(SCRAP_CONFIG.gasEndpoint).host; } catch (e) { return "INVALID_URL"; }
+  })() : "UNKNOWN",
+  userAgent: (typeof navigator !== "undefined" && navigator.userAgent) ? navigator.userAgent : "",
+  currentStage: "LOOKUP_IDLE",
+  stageTimestamps: {},
+  elapsedMs: 0,
+  lastErrorCode: null,
+  lastHttpStatus: null,
+  responseOriginHost: null,
+  responseContentType: null
+};
+
+if (typeof window !== "undefined") {
+  window.SCRAP_DIAGNOSTIC = SCRAP_DIAGNOSTIC;
+}
+
+function setDiagnosticStage(stage, details = {}) {
+  const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+  if (stage === "LOOKUP_START") {
+    SCRAP_DIAGNOSTIC.stageTimestamps = { LOOKUP_START: now };
+    SCRAP_DIAGNOSTIC.elapsedMs = 0;
+    SCRAP_DIAGNOSTIC.lastErrorCode = null;
+    SCRAP_DIAGNOSTIC.lastHttpStatus = null;
+    SCRAP_DIAGNOSTIC.responseOriginHost = null;
+    SCRAP_DIAGNOSTIC.responseContentType = null;
+  } else {
+    SCRAP_DIAGNOSTIC.stageTimestamps[stage] = now;
+    const start = SCRAP_DIAGNOSTIC.stageTimestamps.LOOKUP_START || now;
+    SCRAP_DIAGNOSTIC.elapsedMs = Math.round(now - start);
+  }
+  SCRAP_DIAGNOSTIC.currentStage = stage;
+  if (details.errorCode) SCRAP_DIAGNOSTIC.lastErrorCode = details.errorCode;
+  if (details.httpStatus !== undefined) SCRAP_DIAGNOSTIC.lastHttpStatus = details.httpStatus;
+  if (details.responseOriginHost) SCRAP_DIAGNOSTIC.responseOriginHost = details.responseOriginHost;
+  if (details.responseContentType) SCRAP_DIAGNOSTIC.responseContentType = details.responseContentType;
+
+  const cfg = (typeof window !== "undefined" && window.SCRAP_CONFIG) ? window.SCRAP_CONFIG : (typeof SCRAP_CONFIG !== "undefined" ? SCRAP_CONFIG : null);
+  if (cfg) {
+    if (cfg.environment) SCRAP_DIAGNOSTIC.environment = cfg.environment;
+    if (cfg.gasEndpoint) {
+      try { SCRAP_DIAGNOSTIC.endpointHost = new URL(cfg.gasEndpoint).host; } catch (e) {}
+    }
+  }
+
+  if (typeof window !== "undefined" && typeof window.updateDiagnosticUI === "function") {
+    window.updateDiagnosticUI();
+  }
+}
+
+if (typeof window !== "undefined") {
+  window.setDiagnosticStage = setDiagnosticStage;
+}
+
 class GasClient {
   constructor(endpointUrl = "", options = {}) {
     const config = typeof window !== "undefined" && window.SCRAP_CONFIG ? window.SCRAP_CONFIG : {};
@@ -312,18 +374,55 @@ class GasClient {
     const isProd = (typeof SCRAP_CONFIG !== "undefined" && SCRAP_CONFIG.isProduction) ? SCRAP_CONFIG.isProduction() : false;
     const modeLabel = isProd ? "GAS_PRODUCTION" : "GAS_STAGING";
 
+    setDiagnosticStage("LOOKUP_START");
+
     const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
     const timeoutMs = 15000;
-    const timerId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
 
-    try {
-      const fetchOptions = { method: "GET", redirect: "follow" };
+    // Hard Promise Timeout (15000ms): AbortController にのみ依存せず Promise.race で強制遮断
+    let hardTimeoutTimer = null;
+    const hardTimeoutPromise = new Promise((_, reject) => {
+      hardTimeoutTimer = setTimeout(() => {
+        if (controller) {
+          try { controller.abort(); } catch (e) {}
+        }
+        const err = new Error("EMPLOYEE_LOOKUP_HARD_TIMEOUT");
+        err.name = "HardTimeoutError";
+        err.code = "EMPLOYEE_LOOKUP_HARD_TIMEOUT";
+        reject(err);
+      }, timeoutMs);
+    });
+
+    const fetchAndParseEmployee = async () => {
+      // Cache buster: 毎リクエスト一意のタイムスタンプを付与
+      const cacheBuster = Date.now();
+      const lookupUrl = `${this.endpointUrl}?action=employee&empNo=${encodeURIComponent(cleanEmpNo)}&_cb=${cacheBuster}`;
+
+      const fetchOptions = {
+        method: "GET",
+        redirect: "follow",
+        cache: "no-store",
+        credentials: "omit"
+      };
       if (controller) {
         fetchOptions.signal = controller.signal;
       }
 
-      const resp = await fetch(`${this.endpointUrl}?action=employee&empNo=${encodeURIComponent(cleanEmpNo)}`, fetchOptions);
-      if (timerId) clearTimeout(timerId);
+      setDiagnosticStage("FETCH_DISPATCHED");
+
+      const resp = await fetch(lookupUrl, fetchOptions);
+
+      let respHost = null;
+      try {
+        if (resp.url) respHost = new URL(resp.url).host;
+      } catch (e) {}
+      const contentType = resp.headers ? (resp.headers.get("content-type") || "") : "";
+
+      setDiagnosticStage("FETCH_RESPONSE_RECEIVED", {
+        httpStatus: resp.status,
+        responseOriginHost: respHost,
+        responseContentType: contentType
+      });
 
       if (!resp.ok) {
         const errData = await resp.json().catch(() => ({}));
@@ -335,7 +434,11 @@ class GasClient {
         };
       }
 
+      setDiagnosticStage("JSON_PARSE_START");
+
       const data = await resp.json();
+
+      setDiagnosticStage("JSON_PARSED");
 
       // エラーレスポンスの正規化
       if (!data || data.success === false || data.error) {
@@ -348,8 +451,6 @@ class GasClient {
       }
 
       // 成功レスポンスの正規化 (Canonical Employee Contract)
-      // data.employee がオブジェクトとして存在する場合 (MOCK/STAGING互換) と、
-      // data 直下に employeeNo 等が平坦に存在する場合 (Production GAS) の双方を統一
       const src = (data.employee && typeof data.employee === "object") ? data.employee : data;
       const resolvedEmpNo = String(src.employeeNo || src.empNo || cleanEmpNo).trim();
       const resolvedEmpName = String(src.employeeName || "").trim();
@@ -363,7 +464,7 @@ class GasClient {
         ? src.baseSelectionRequired
         : (!bCode);
 
-      return {
+      const normalized = {
         success: true,
         mode: modeLabel,
         employee: {
@@ -375,19 +476,41 @@ class GasClient {
         },
         preference: data.preference || null
       };
+
+      setDiagnosticStage("NORMALIZED");
+
+      return normalized;
+    };
+
+    try {
+      const result = await Promise.race([
+        fetchAndParseEmployee(),
+        hardTimeoutPromise
+      ]);
+      if (hardTimeoutTimer) clearTimeout(hardTimeoutTimer);
+      return result;
     } catch (e) {
-      if (timerId) clearTimeout(timerId);
+      if (hardTimeoutTimer) clearTimeout(hardTimeoutTimer);
       console.error("[gasClient] lookupEmployee failed:", e);
 
-      const isTimeout = (e.name === "AbortError" || e.code === 20 || String(e.message).includes("abort"));
-      if (isTimeout) {
+      const isHardTimeout = (e.name === "HardTimeoutError" || e.code === "EMPLOYEE_LOOKUP_HARD_TIMEOUT" || e.message === "EMPLOYEE_LOOKUP_HARD_TIMEOUT");
+      const isAbortTimeout = (e.name === "AbortError" || e.code === 20 || String(e.message).includes("abort"));
+
+      if (isHardTimeout || isAbortTimeout) {
+        setDiagnosticStage("LOOKUP_FAILED", {
+          errorCode: isHardTimeout ? "EMPLOYEE_LOOKUP_HARD_TIMEOUT" : "EMPLOYEE_LOOKUP_TIMEOUT"
+        });
         return {
           success: false,
           mode: modeLabel,
-          error: "EMPLOYEE_LOOKUP_TIMEOUT",
+          error: isHardTimeout ? "EMPLOYEE_LOOKUP_HARD_TIMEOUT" : "EMPLOYEE_LOOKUP_TIMEOUT",
           message: "社員情報の照会がタイムアウトしました。通信状態を確認して再試行してください。"
         };
       }
+
+      setDiagnosticStage("LOOKUP_FAILED", {
+        errorCode: isProd ? "PROD_BACKEND_UNAVAILABLE" : "STAGING_BACKEND_UNAVAILABLE"
+      });
 
       return {
         success: false,
@@ -995,9 +1118,17 @@ class GasClient {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { GasClient };
+  module.exports = {
+    GasClient,
+    SCRAP_FRONTEND_BUILD_ID,
+    SCRAP_DIAGNOSTIC,
+    setDiagnosticStage
+  };
 }
 if (typeof window !== "undefined") {
   window.GasClient = GasClient;
+  window.SCRAP_FRONTEND_BUILD_ID = SCRAP_FRONTEND_BUILD_ID;
+  window.SCRAP_DIAGNOSTIC = SCRAP_DIAGNOSTIC;
+  window.setDiagnosticStage = setDiagnosticStage;
 }
 
