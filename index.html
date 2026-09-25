@@ -371,6 +371,33 @@
           </div>
           <button type="button" class="btn btn-secondary btn-sm" style="margin-top:0.8rem;" onclick="saveFixedItemPreferences()">定型品設定を保存</button>
         </div>
+
+        <!-- ?diag=1 診断パネル (iPhone / PC 通信診断用・PII/秘密情報完全非表示) -->
+        <div id="diagnostic-panel" class="settings-section" style="display:none; border-top:2px dashed var(--color-border); padding-top:1.2rem; margin-top:1.2rem; background:rgba(0,0,0,0.03); border-radius:6px; padding:12px;">
+          <h3 class="settings-subheading" style="color:var(--color-primary); font-size:0.95rem; margin-bottom:0.4rem;">🔍 通信診断パネル (?diag=1)</h3>
+          <p style="font-size:0.75rem; color:var(--color-text-muted); margin-bottom:0.6rem;">※個人情報・社員名・秘密情報は一切表示されません</p>
+          <div style="font-size:0.8rem; font-family:monospace; line-height:1.6; word-break:break-all;">
+            <div><strong>Build:</strong> <span id="diag-build-id">--</span></div>
+            <div><strong>Environment:</strong> <span id="diag-environment">--</span></div>
+            <div><strong>Endpoint Host:</strong> <span id="diag-endpoint-host">--</span></div>
+            <div><strong>UserAgent:</strong> <span id="diag-user-agent" style="font-size:0.72rem;">--</span></div>
+            <div style="margin-top:6px; border-top:1px solid #ddd; padding-top:6px;">
+              <div><strong>Current Stage:</strong> <span id="diag-stage" style="font-weight:bold; color:var(--color-primary);">--</span></div>
+              <div><strong>Elapsed:</strong> <span id="diag-elapsed">0 ms</span></div>
+              <div><strong>Last Error:</strong> <span id="diag-error-code">none</span></div>
+              <div><strong>Last HTTP Status:</strong> <span id="diag-http-status">none</span></div>
+              <div><strong>Response Origin Host:</strong> <span id="diag-origin-host">none</span></div>
+              <div><strong>Response Content-Type:</strong> <span id="diag-content-type">none</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Frontend Build ID 常時表示 -->
+        <div class="settings-section" style="border-top:1px solid var(--color-border); padding-top:1rem; margin-top:1rem; text-align:center;">
+          <div id="frontend-build-id-display" style="font-size:0.75rem; color:var(--color-text-muted); font-family:monospace;">
+            Build: GATE3A5-20260925-01
+          </div>
+        </div>
       </div>
     </section>
   </main>
@@ -523,17 +550,18 @@
   </div>
 
   <!-- スクリプト読み込み (依存順) -->
-  <script src="src/js/config.js?v=gate3a4"></script>
-  <script src="src/js/fixtures.js"></script>
-  <script src="src/js/baseService.js"></script>
-  <script src="src/js/itemService.js"></script>
-  <script src="src/js/quantityEngine.js"></script>
-  <script src="src/js/weightEngine.js"></script>
-  <script src="src/js/signatureHelper.js"></script>
-  <script src="src/js/signature.js"></script>
-  <script src="src/js/gasClient.js?v=gate3a4"></script>
-  <script src="src/js/storage.js"></script>
-  <script src="src/js/validator.js"></script>
-  <script src="src/js/app.js?v=gate3a4"></script>
+  <script src="src/js/config.js?v=gate3a5"></script>
+  <script src="src/js/fixtures.js?v=gate3a5"></script>
+  <script src="src/js/baseService.js?v=gate3a5"></script>
+  <script src="src/js/itemService.js?v=gate3a5"></script>
+  <script src="src/js/quantityEngine.js?v=gate3a5"></script>
+  <script src="src/js/weightEngine.js?v=gate3a5"></script>
+  <script src="src/js/signatureHelper.js?v=gate3a5"></script>
+  <script src="src/js/signature.js?v=gate3a5"></script>
+  <script src="src/js/gasClient.js?v=gate3a5"></script>
+  <script src="src/js/storage.js?v=gate3a5"></script>
+  <script src="src/js/validator.js?v=gate3a5"></script>
+  <script src="src/js/app.js?v=gate3a5"></script>
 </body>
 </html>
+
