@@ -719,6 +719,9 @@ function verifyAndSaveEmployee() {
     return;
   }
 
+  const verifyBtn = document.getElementById("btn-verify-employee");
+  if (verifyBtn) verifyBtn.disabled = true;
+
   const statusEl = document.getElementById("setting-employee-status");
   if (statusEl) statusEl.innerHTML = `<span style="color:var(--color-primary);">照会中...</span>`;
 
@@ -736,7 +739,7 @@ function verifyAndSaveEmployee() {
         return;
       }
 
-      resolvedEmployeeNo = emp.empNo;
+      resolvedEmployeeNo = emp.employeeNo || emp.empNo || empNo;
       resolvedEmployeeName = emp.employeeName;
       assignedEmployeeBaseCode = bCode;
       assignedEmployeeBaseName = bName;
@@ -796,14 +799,30 @@ function verifyAndSaveEmployee() {
         message: modalMsg
       });
     } else {
-      const msg = res ? (res.message || res.error) : "社員番号の照会に失敗しました。";
+      let msg = "社員番号の照会に失敗しました。";
+      if (res && res.message) {
+        msg = res.message;
+      } else if (res && res.error) {
+        if (res.error === "EMPLOYEE_NOT_FOUND") {
+          msg = "指定された社員番号が見つかりません。";
+        } else if (res.error === "EMPLOYEE_LOOKUP_TIMEOUT") {
+          msg = "社員情報の照会がタイムアウトしました。通信状態を確認して再試行してください。";
+        } else {
+          msg = `エラー: ${res.error}`;
+        }
+      }
       if (statusEl) statusEl.innerHTML = `<span style="color:var(--color-danger); font-weight:bold;">✕ ${msg}</span>`;
       showAppModal({ title: "照会エラー", message: msg });
     }
   }).catch(err => {
     console.error("[app.js] lookupEmployee error:", err);
-    if (statusEl) statusEl.innerHTML = `<span style="color:var(--color-danger);">通信エラーが発生しました。</span>`;
-    showAppModal({ title: "通信エラー", message: "社員情報の取得に失敗しました。通信状態を確認してください。" });
+    const msg = (err && err.message) ? err.message : "社員情報の取得に失敗しました。通信状態を確認してください。";
+    if (statusEl) statusEl.innerHTML = `<span style="color:var(--color-danger); font-weight:bold;">✕ 通信エラー</span>`;
+    showAppModal({ title: "通信エラー", message: msg });
+  }).finally(() => {
+    if (verifyBtn) {
+      verifyBtn.disabled = false;
+    }
   });
 }
 
@@ -2995,4 +3014,5 @@ if (typeof window !== "undefined") {
   window.getPrintQuantityDisplay = getPrintQuantityDisplay;
   window.checkIfSlipAffectsSummary = checkIfSlipAffectsSummary;
 }
+
 
