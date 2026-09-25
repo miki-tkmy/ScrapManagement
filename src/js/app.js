@@ -41,6 +41,7 @@ let resolvedBaseName = "";
 if (typeof document !== "undefined") {
   document.addEventListener("DOMContentLoaded", () => {
     initUserSettings();
+    initDiagnostic(); // Gate 3-A.5: 診断モード (?diag=1) & Build ID 表示初期化
     initCompletionState(); // Section 8: Priority - open completion modal immediately before background sync
     initGasClient();
     initBaseCodeHandlers();
@@ -719,6 +720,10 @@ function verifyAndSaveEmployee() {
     return;
   }
 
+  if (typeof setDiagnosticStage === "function") {
+    setDiagnosticStage("LOOKUP_START");
+  }
+
   const verifyBtn = document.getElementById("btn-verify-employee");
   if (verifyBtn) verifyBtn.disabled = true;
 
@@ -726,6 +731,10 @@ function verifyAndSaveEmployee() {
   if (statusEl) statusEl.innerHTML = `<span style="color:var(--color-primary);">照会中...</span>`;
 
   gasClient.lookupEmployee(empNo).then(res => {
+    if (typeof setDiagnosticStage === "function") {
+      setDiagnosticStage("APP_RECEIVED");
+    }
+
     if (res && res.success && res.employee) {
       const emp = res.employee;
       const bCode = emp.employeeBaseCode !== undefined ? String(emp.employeeBaseCode).trim() : (emp.baseCode ? String(emp.baseCode).trim() : "");
@@ -736,6 +745,9 @@ function verifyAndSaveEmployee() {
         const mismatchMsg = "社員情報の拠点データに不整合があります (BaseCode または BaseName の片方のみ設定)。";
         if (statusEl) statusEl.innerHTML = `<span style="color:var(--color-danger); font-weight:bold;">✕ ${mismatchMsg}</span>`;
         showAppModal({ title: "社員情報不整合", message: mismatchMsg });
+        if (typeof setDiagnosticStage === "function") {
+          setDiagnosticStage("UI_UPDATED", { errorCode: "BASE_DATA_MISMATCH" });
+        }
         return;
       }
 
@@ -790,6 +802,10 @@ function verifyAndSaveEmployee() {
       applyEmployeeLockToForm();
       hideEmployeeUnconfiguredBanner();
 
+      if (typeof setDiagnosticStage === "function") {
+        setDiagnosticStage("UI_UPDATED");
+      }
+
       const modalMsg = assignedEmployeeBaseCode
         ? `社員番号: ${resolvedEmployeeNo}\n担当者: ${resolvedEmployeeName}\n所属拠点: ${assignedEmployeeBaseName}\nとして設定しました。`
         : `社員番号: ${resolvedEmployeeNo}\n担当者: ${resolvedEmployeeName}\n所属拠点: なし（本部・統括社員）\nとして設定しました。\n伝票入力時に入力対象Baseを選択してください。`;
@@ -800,16 +816,20 @@ function verifyAndSaveEmployee() {
       });
     } else {
       let msg = "社員番号の照会に失敗しました。";
+      let errCode = (res && res.error) || "UNKNOWN_ERROR";
       if (res && res.message) {
         msg = res.message;
       } else if (res && res.error) {
         if (res.error === "EMPLOYEE_NOT_FOUND") {
           msg = "指定された社員番号が見つかりません。";
-        } else if (res.error === "EMPLOYEE_LOOKUP_TIMEOUT") {
+        } else if (res.error === "EMPLOYEE_LOOKUP_TIMEOUT" || res.error === "EMPLOYEE_LOOKUP_HARD_TIMEOUT") {
           msg = "社員情報の照会がタイムアウトしました。通信状態を確認して再試行してください。";
         } else {
           msg = `エラー: ${res.error}`;
         }
+      }
+      if (typeof setDiagnosticStage === "function") {
+        setDiagnosticStage("UI_UPDATED", { errorCode: errCode });
       }
       if (statusEl) statusEl.innerHTML = `<span style="color:var(--color-danger); font-weight:bold;">✕ ${msg}</span>`;
       showAppModal({ title: "照会エラー", message: msg });
@@ -817,13 +837,80 @@ function verifyAndSaveEmployee() {
   }).catch(err => {
     console.error("[app.js] lookupEmployee error:", err);
     const msg = (err && err.message) ? err.message : "社員情報の取得に失敗しました。通信状態を確認してください。";
+    if (typeof setDiagnosticStage === "function") {
+      setDiagnosticStage("LOOKUP_FAILED", { errorCode: "EXCEPTION" });
+    }
     if (statusEl) statusEl.innerHTML = `<span style="color:var(--color-danger); font-weight:bold;">✕ 通信エラー</span>`;
     showAppModal({ title: "通信エラー", message: msg });
   }).finally(() => {
+    if (typeof setDiagnosticStage === "function") {
+      setDiagnosticStage("LOOKUP_FINISHED");
+    }
     if (verifyBtn) {
       verifyBtn.disabled = false;
     }
+    if (statusEl && statusEl.innerHTML && statusEl.innerHTML.includes("照会中...")) {
+      statusEl.innerHTML = `<span style="color:var(--color-danger); font-weight:bold;">✕ 照会を終了しました</span>`;
+    }
   });
+}
+
+// Gate 3-A.5: 診断パネル初期化 & DOM更新ヘルパー
+function initDiagnostic() {
+  const urlParams = (typeof window !== "undefined" && window.location) ? new URLSearchParams(window.location.search) : null;
+  const isDiag = urlParams && urlParams.get("diag") === "1";
+  const diagPanel = document.getElementById("diagnostic-panel");
+  if (diagPanel && isDiag) {
+    diagPanel.style.display = "block";
+  }
+
+  const diagBuildId = document.getElementById("diag-build-id");
+  if (diagBuildId && typeof SCRAP_FRONTEND_BUILD_ID !== "undefined") {
+    diagBuildId.textContent = SCRAP_FRONTEND_BUILD_ID;
+  }
+
+  updateDiagnosticUI();
+}
+
+function updateDiagnosticUI() {
+  if (typeof document === "undefined") return;
+  const diag = (typeof window !== "undefined" && window.SCRAP_DIAGNOSTIC) ? window.SCRAP_DIAGNOSTIC : null;
+  if (!diag) return;
+
+  const bId = document.getElementById("diag-build-id");
+  if (bId) bId.textContent = diag.buildId || "--";
+
+  const envEl = document.getElementById("diag-environment");
+  if (envEl) envEl.textContent = diag.environment || "--";
+
+  const hostEl = document.getElementById("diag-endpoint-host");
+  if (hostEl) hostEl.textContent = diag.endpointHost || "--";
+
+  const uaEl = document.getElementById("diag-user-agent");
+  if (uaEl) uaEl.textContent = diag.userAgent || "--";
+
+  const stageEl = document.getElementById("diag-stage");
+  if (stageEl) stageEl.textContent = diag.currentStage || "--";
+
+  const elapsedEl = document.getElementById("diag-elapsed");
+  if (elapsedEl) elapsedEl.textContent = `${diag.elapsedMs || 0} ms`;
+
+  const errEl = document.getElementById("diag-error-code");
+  if (errEl) errEl.textContent = diag.lastErrorCode || "none";
+
+  const statusEl = document.getElementById("diag-http-status");
+  if (statusEl) statusEl.textContent = (diag.lastHttpStatus !== null && diag.lastHttpStatus !== undefined) ? String(diag.lastHttpStatus) : "none";
+
+  const origEl = document.getElementById("diag-origin-host");
+  if (origEl) origEl.textContent = diag.responseOriginHost || "none";
+
+  const typeEl = document.getElementById("diag-content-type");
+  if (typeEl) typeEl.textContent = diag.responseContentType || "none";
+}
+
+if (typeof window !== "undefined") {
+  window.updateDiagnosticUI = updateDiagnosticUI;
+  window.initDiagnostic = initDiagnostic;
 }
 
 // 4. BaseCode ハンドラ (未設定時フォールバック用)
