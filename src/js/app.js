@@ -38,22 +38,100 @@ let workingBaseName = "";
 let resolvedBaseCode = "";
 let resolvedBaseName = "";
 
+function runBootstrapSequence() {
+  if (typeof setDiagnosticStage === "function") {
+    setDiagnosticStage("BOOTSTRAP_START");
+  }
+
+  const steps = [
+    {
+      name: "initializeGasClientInstance",
+      fn: () => initializeGasClientInstance()
+    },
+    {
+      name: "initDiagnostic",
+      fn: () => initDiagnostic()
+    },
+    {
+      name: "initUserSettings",
+      fn: () => {
+        initUserSettings();
+        if (typeof setDiagnosticStage === "function") {
+          setDiagnosticStage("USER_SETTINGS_RESTORED");
+        }
+      }
+    },
+    {
+      name: "startMasterSynchronization",
+      fn: () => startMasterSynchronization()
+    },
+    {
+      name: "initCompletionState",
+      fn: () => initCompletionState()
+    },
+    {
+      name: "initBaseCodeHandlers",
+      fn: () => initBaseCodeHandlers()
+    },
+    {
+      name: "initBaseSelectorModal",
+      fn: () => initBaseSelectorModal()
+    },
+    {
+      name: "initItemCodeHandlers",
+      fn: () => initItemCodeHandlers()
+    },
+    {
+      name: "initFixedItemsList",
+      fn: () => initFixedItemsList()
+    },
+    {
+      name: "initVendorSignaturePad",
+      fn: () => initVendorSignaturePad()
+    },
+    {
+      name: "initSummaryDates",
+      fn: () => initSummaryDates()
+    },
+    {
+      name: "setupNormalizations",
+      fn: () => {
+        setupHalfWidthNormalization(document.getElementById("other-name-input"));
+        setupHalfWidthNormalization(document.getElementById("other-qty-input"));
+      }
+    },
+    {
+      name: "updateDisplays",
+      fn: () => {
+        updateWeightDisplay();
+        updateSignatureDisplay();
+      }
+    }
+  ];
+
+  let hasFatalError = false;
+  for (const step of steps) {
+    try {
+      step.fn();
+    } catch (err) {
+      console.error("[BOOTSTRAP_INIT_ERROR] Step failed:", step.name, err);
+      hasFatalError = true;
+      if (typeof setDiagnosticStage === "function") {
+        setDiagnosticStage("BOOTSTRAP_FAILED", {
+          errorCode: `BOOTSTRAP_INIT_ERROR_${step.name}`
+        });
+      }
+    }
+  }
+
+  if (!hasFatalError && typeof setDiagnosticStage === "function") {
+    setDiagnosticStage("BOOTSTRAP_READY");
+  }
+}
+
 if (typeof document !== "undefined") {
   document.addEventListener("DOMContentLoaded", () => {
-    initUserSettings();
-    initDiagnostic(); // Gate 3-A.5: 診断モード (?diag=1) & Build ID 表示初期化
-    initCompletionState(); // Section 8: Priority - open completion modal immediately before background sync
-    initGasClient();
-    initBaseCodeHandlers();
-    initBaseSelectorModal();
-    initItemCodeHandlers();
-    initFixedItemsList();
-    initVendorSignaturePad();
-    initSummaryDates();
-    setupHalfWidthNormalization(document.getElementById("other-name-input"));
-    setupHalfWidthNormalization(document.getElementById("other-qty-input"));
-    updateWeightDisplay();
-    updateSignatureDisplay();
+    runBootstrapSequence();
   });
 }
 
@@ -143,11 +221,19 @@ function retryFetchMasters() {
   fetchAndApplyMasters(1);
 }
 
-// 1. GAS クライアント初期化 & マスタ同期 (SWR & ローディング UX)
-function initGasClient() {
-  gasClient = new GasClient();
+// 1. GAS クライアント初期化 (依存処理の前に必ず実行)
+function initializeGasClientInstance() {
+  if (!gasClient) {
+    gasClient = new GasClient();
+  }
   updateNetworkStatus();
+  if (typeof setDiagnosticStage === "function") {
+    setDiagnosticStage("GAS_CLIENT_READY");
+  }
+}
 
+// マスタデータ復元 & バックグラウンド同期開始
+function startMasterSynchronization() {
   // Fast Path: マスタキャッシュ (localStorage) があれば即時復元して画面操作可能へ
   const cachedMasters = TerminalStorage.getMasterCache();
   const userSettings = TerminalStorage.getUserSettings();
@@ -180,6 +266,12 @@ function initGasClient() {
 
   // バックグラウンドで State / MasterRevision を確認
   checkMasterRevisionAndUpdate();
+}
+
+// 後方互換性エイリアス
+function initGasClient() {
+  initializeGasClientInstance();
+  startMasterSynchronization();
 }
 
 function checkMasterRevisionAndUpdate() {
@@ -342,20 +434,26 @@ function initUserSettings() {
     hideEmployeeUnconfiguredBanner();
 
     // V3.10 SWR: バックグラウンドで最新 Preference リビジョンを確認
-    gasClient.lookupEmployee(resolvedEmployeeNo).then(res => {
-      if (res && res.success && res.preference) {
-        const cachedPref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
-        const serverRev = typeof res.preference.preferenceRevision === "number"
-          ? res.preference.preferenceRevision
-          : (typeof res.preference.revision === "number" ? res.preference.revision : 0);
-        if (!cachedPref.exists || cachedPref.revision !== serverRev) {
-          TerminalStorage.saveEmployeePreferences(resolvedEmployeeNo, res.preference);
-          const activePref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
-          window.ACTIVE_ITEMS = applyMaterialCategoryFilter(window.ACTIVE_ALL_ITEMS || [], activePref.categories);
-          renderSettingsView();
+    if (gasClient && typeof gasClient.lookupEmployee === "function") {
+      gasClient.lookupEmployee(resolvedEmployeeNo).then(res => {
+        if (res && res.success && res.preference) {
+          const cachedPref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
+          const serverRev = typeof res.preference.preferenceRevision === "number"
+            ? res.preference.preferenceRevision
+            : (typeof res.preference.revision === "number" ? res.preference.revision : 0);
+          if (!cachedPref.exists || cachedPref.revision !== serverRev) {
+            TerminalStorage.saveEmployeePreferences(resolvedEmployeeNo, res.preference);
+            const activePref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
+            window.ACTIVE_ITEMS = applyMaterialCategoryFilter(window.ACTIVE_ALL_ITEMS || [], activePref.categories);
+            renderSettingsView();
+          }
         }
-      }
-    }).catch(() => {});
+      }).catch(err => {
+        console.warn("[initUserSettings] Background preference refresh error (non-fatal):", err);
+      });
+    } else {
+      console.warn("[initUserSettings] gasClient is not initialized; skipping background preference refresh.");
+    }
   } else {
     // 社員未設定状態を維持
     resolvedEmployeeNo = "";
@@ -720,14 +818,29 @@ function verifyAndSaveEmployee() {
     return;
   }
 
+  const verifyBtn = document.getElementById("btn-verify-employee");
+  const statusEl = document.getElementById("setting-employee-status");
+
+  // Defensive Guard: gasClient 利用可能性チェック (未初期化による同期例外と永久待機を完全防止)
+  if (!gasClient || typeof gasClient.lookupEmployee !== "function") {
+    console.error("[verifyAndSaveEmployee] gasClient not initialized");
+    const errMsg = "通信機能の初期化に失敗しました。ページを再読み込みしてください。";
+    if (statusEl) {
+      statusEl.innerHTML = `<span style="color:var(--color-danger); font-weight:bold;">✕ ${errMsg}</span>`;
+    }
+    showAppModal({ title: "初期化エラー", message: errMsg });
+    if (typeof setDiagnosticStage === "function") {
+      setDiagnosticStage("LOOKUP_FAILED", { errorCode: "GAS_CLIENT_NOT_INITIALIZED" });
+    }
+    if (verifyBtn) verifyBtn.disabled = false;
+    return;
+  }
+
   if (typeof setDiagnosticStage === "function") {
     setDiagnosticStage("LOOKUP_START");
   }
 
-  const verifyBtn = document.getElementById("btn-verify-employee");
   if (verifyBtn) verifyBtn.disabled = true;
-
-  const statusEl = document.getElementById("setting-employee-status");
   if (statusEl) statusEl.innerHTML = `<span style="color:var(--color-primary);">照会中...</span>`;
 
   gasClient.lookupEmployee(empNo).then(res => {
@@ -3093,13 +3206,22 @@ if (typeof module !== "undefined" && module.exports) {
     openBaseSelectorModal,
     closeBaseSelectorModal,
     renderBaseSelectorList,
-    renderWorkingBaseUi
+    renderWorkingBaseUi,
+    initializeGasClientInstance,
+    startMasterSynchronization,
+    runBootstrapSequence,
+    initGasClient,
+    getGasClientInstance: () => gasClient,
+    setGasClientInstance: (c) => { gasClient = c; }
   };
 }
 
 if (typeof window !== "undefined") {
   window.getPrintQuantityDisplay = getPrintQuantityDisplay;
   window.checkIfSlipAffectsSummary = checkIfSlipAffectsSummary;
+  window.initializeGasClientInstance = initializeGasClientInstance;
+  window.startMasterSynchronization = startMasterSynchronization;
+  window.runBootstrapSequence = runBootstrapSequence;
 }
 
 
