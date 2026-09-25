@@ -284,6 +284,7 @@ class GasClient {
         success: true,
         mode: "MOCK",
         employee: Object.assign({}, emp, {
+          employeeNo: emp.employeeNo || emp.empNo || cleanEmpNo,
           employeeBaseCode: bCode,
           employeeBaseName: bName,
           baseCode: bCode,
@@ -308,26 +309,91 @@ class GasClient {
       };
     }
 
+    const isProd = (typeof SCRAP_CONFIG !== "undefined" && SCRAP_CONFIG.isProduction) ? SCRAP_CONFIG.isProduction() : false;
+    const modeLabel = isProd ? "GAS_PRODUCTION" : "GAS_STAGING";
+
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timeoutMs = 15000;
+    const timerId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+
     try {
-      const resp = await fetch(`${this.endpointUrl}?action=employee&empNo=${encodeURIComponent(cleanEmpNo)}`, { method: "GET" });
+      const fetchOptions = { method: "GET", redirect: "follow" };
+      if (controller) {
+        fetchOptions.signal = controller.signal;
+      }
+
+      const resp = await fetch(`${this.endpointUrl}?action=employee&empNo=${encodeURIComponent(cleanEmpNo)}`, fetchOptions);
+      if (timerId) clearTimeout(timerId);
+
       if (!resp.ok) {
         const errData = await resp.json().catch(() => ({}));
         return {
           success: false,
+          mode: modeLabel,
           error: errData.error || `HTTP_${resp.status}`,
           message: errData.message || `サーバーエラー (${resp.status})`
         };
       }
+
       const data = await resp.json();
-      data.mode = "GAS_STAGING";
-      return data;
+
+      // エラーレスポンスの正規化
+      if (!data || data.success === false || data.error) {
+        return {
+          success: false,
+          mode: modeLabel,
+          error: (data && data.error) || "EMPLOYEE_NOT_FOUND",
+          message: (data && data.message) || "社員情報が見つかりません。"
+        };
+      }
+
+      // 成功レスポンスの正規化 (Canonical Employee Contract)
+      // data.employee がオブジェクトとして存在する場合 (MOCK/STAGING互換) と、
+      // data 直下に employeeNo 等が平坦に存在する場合 (Production GAS) の双方を統一
+      const src = (data.employee && typeof data.employee === "object") ? data.employee : data;
+      const resolvedEmpNo = String(src.employeeNo || src.empNo || cleanEmpNo).trim();
+      const resolvedEmpName = String(src.employeeName || "").trim();
+      const bCode = src.employeeBaseCode !== undefined
+        ? String(src.employeeBaseCode).trim()
+        : (src.baseCode !== undefined ? String(src.baseCode).trim() : "");
+      const bName = src.employeeBaseName !== undefined
+        ? String(src.employeeBaseName).trim()
+        : (src.baseName !== undefined ? String(src.baseName).trim() : "");
+      const baseSelectionRequired = (typeof src.baseSelectionRequired === "boolean")
+        ? src.baseSelectionRequired
+        : (!bCode);
+
+      return {
+        success: true,
+        mode: modeLabel,
+        employee: {
+          employeeNo: resolvedEmpNo,
+          employeeName: resolvedEmpName,
+          employeeBaseCode: bCode,
+          employeeBaseName: bName,
+          baseSelectionRequired: baseSelectionRequired
+        },
+        preference: data.preference || null
+      };
     } catch (e) {
+      if (timerId) clearTimeout(timerId);
       console.error("[gasClient] lookupEmployee failed:", e);
+
+      const isTimeout = (e.name === "AbortError" || e.code === 20 || String(e.message).includes("abort"));
+      if (isTimeout) {
+        return {
+          success: false,
+          mode: modeLabel,
+          error: "EMPLOYEE_LOOKUP_TIMEOUT",
+          message: "社員情報の照会がタイムアウトしました。通信状態を確認して再試行してください。"
+        };
+      }
+
       return {
         success: false,
-        mode: "GAS_STAGING",
-        error: "STAGING_BACKEND_UNAVAILABLE",
-        message: e.message
+        mode: modeLabel,
+        error: isProd ? "PROD_BACKEND_UNAVAILABLE" : "STAGING_BACKEND_UNAVAILABLE",
+        message: e.message || "通信エラーが発生しました。"
       };
     }
   }
@@ -934,3 +1000,4 @@ if (typeof module !== "undefined" && module.exports) {
 if (typeof window !== "undefined") {
   window.GasClient = GasClient;
 }
+
