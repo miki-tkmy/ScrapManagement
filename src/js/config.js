@@ -6,9 +6,9 @@
 // ========================================================================================
 
 const SCRAP_CONFIG = {
-  environment: "PRODUCTION", // "STAGING", "PRODUCTION", or "LOCAL_TEST"
+  environment: "STAGING", // "STAGING", "PRODUCTION", or "LOCAL_TEST"
   // STAGING 用 GAS Web App URL
-  gasEndpoint: "https://script.google.com/macros/s/AKfycby6rxBeHBR7odhVkpN0M5UuYyLaLAWAqSq1Xe2a288FOkITTG206ibXerc7Pk-Mlb5PEQ/exec",
+  gasEndpoint: "https://script.google.com/macros/s/AKfycbz43zoBz04ZP3x_R1C62QlJrLNLtQFLXz8K4-mf4BlIBj24OpZWE8iPtQhYgHAHJBx6/exec",
   isStaging() {
     return this.environment === "STAGING";
   },
