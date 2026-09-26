@@ -217,6 +217,7 @@ function normalizeEmployeePreference(pref) {
     return {
       exists: false,
       categories: DEFAULT_29_CATEGORIES.slice(),
+      fixedItemIds: null,
       revision: 0,
       updatedAt: null
     };
@@ -230,18 +231,27 @@ function normalizeEmployeePreference(pref) {
     rawCats = pref.selectedMaterialCategories;
   }
 
+  // fixedItemIds 抽出: pref.fixedItemIds (内部 Canonical 形式) または pref.selectedFixedItemIds (API 形式)
+  let rawFixed = undefined;
+  if (pref.fixedItemIds !== undefined) {
+    rawFixed = pref.fixedItemIds;
+  } else if (pref.selectedFixedItemIds !== undefined) {
+    rawFixed = pref.selectedFixedItemIds;
+  }
+
   // exists 判定:
   // 1. 明示的に exists === true の場合は存在
   // 2. 明示的に exists === false の場合は不存在
-  // 3. exists が未定義だが categories または selectedMaterialCategories が配列として与えられている場合は存在 (内部 Canonical 互換)
+  // 3. exists が未定義だが categories または fixedItemIds が与えられている場合は存在 (内部 Canonical 互換)
   let exists = false;
   if (pref.exists === true) {
     exists = true;
   } else if (pref.exists === false) {
     exists = false;
-  } else if (rawCats !== null) {
+  } else if (rawCats !== null || rawFixed !== undefined) {
     exists = true;
   }
+
   let rev = 0;
   if (typeof pref.revision === "number" && Number.isFinite(pref.revision)) {
     rev = pref.revision;
@@ -255,6 +265,7 @@ function normalizeEmployeePreference(pref) {
     return {
       exists: false,
       categories: DEFAULT_29_CATEGORIES.slice(),
+      fixedItemIds: null,
       revision: rev,
       updatedAt: updatedAt
     };
@@ -264,9 +275,19 @@ function normalizeEmployeePreference(pref) {
   // rawCats が配列なら (空配列 [] を含め) そのまま保持。配列でない場合は空配列 []
   const categories = Array.isArray(rawCats) ? rawCats.slice() : [];
 
+  let fixedItemIds = null;
+  if (Array.isArray(rawFixed)) {
+    fixedItemIds = rawFixed.slice();
+  } else if (rawFixed === null) {
+    fixedItemIds = null;
+  } else {
+    fixedItemIds = null;
+  }
+
   return {
     exists: true,
     categories: categories,
+    fixedItemIds: fixedItemIds,
     revision: rev,
     updatedAt: updatedAt
   };
@@ -277,6 +298,7 @@ function getEmployeePreferences(empNo) {
     return {
       exists: false,
       categories: DEFAULT_29_CATEGORIES.slice(),
+      fixedItemIds: null,
       revision: 0,
       updatedAt: null,
       cachedAt: null
@@ -290,6 +312,7 @@ function getEmployeePreferences(empNo) {
     return {
       exists: normalized.exists,
       categories: normalized.categories,
+      fixedItemIds: normalized.fixedItemIds,
       revision: normalized.revision,
       updatedAt: normalized.updatedAt,
       cachedAt: rec.cachedAt || null
@@ -298,6 +321,7 @@ function getEmployeePreferences(empNo) {
   return {
     exists: false,
     categories: DEFAULT_29_CATEGORIES.slice(),
+    fixedItemIds: null,
     revision: 0,
     updatedAt: null,
     cachedAt: null
@@ -307,12 +331,26 @@ function getEmployeePreferences(empNo) {
 function saveEmployeePreferences(empNo, pref) {
   if (!empNo) return;
   const cleanEmpNo = String(empNo).trim().toUpperCase();
-  const normalized = normalizeEmployeePreference(pref);
   const allCache = getAllEmployeePreferencesCache();
+  const existing = allCache[cleanEmpNo];
+
+  // Partial merge if only one setting is provided
+  let prefToNormalize = Object.assign({}, pref);
+  if (existing) {
+    if (prefToNormalize.categories === undefined && prefToNormalize.selectedMaterialCategories === undefined && existing.categories !== undefined) {
+      prefToNormalize.categories = existing.categories;
+    }
+    if (prefToNormalize.fixedItemIds === undefined && prefToNormalize.selectedFixedItemIds === undefined && existing.fixedItemIds !== undefined) {
+      prefToNormalize.fixedItemIds = existing.fixedItemIds;
+    }
+  }
+
+  const normalized = normalizeEmployeePreference(prefToNormalize);
 
   allCache[cleanEmpNo] = {
     exists: normalized.exists,
     categories: normalized.categories,
+    fixedItemIds: normalized.fixedItemIds,
     revision: normalized.revision,
     updatedAt: normalized.updatedAt,
     cachedAt: new Date().toISOString()
@@ -736,3 +774,4 @@ if (typeof window !== "undefined") {
     invalidateAllCaches
   };
 }
+
