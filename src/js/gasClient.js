@@ -7,7 +7,7 @@
 // - 中央履歴 (fetchHistory), 伝票詳細 (fetchSlip), 中央集計 (fetchSummary), 社員照会 (lookupEmployee)
 // ========================================================================================
 
-const SCRAP_FRONTEND_BUILD_ID = "GATE3A5-20260925-01";
+const SCRAP_FRONTEND_BUILD_ID = "GATE3A7-FIXPREF-20260926-01";
 if (typeof window !== "undefined") {
   window.SCRAP_FRONTEND_BUILD_ID = SCRAP_FRONTEND_BUILD_ID;
 }
@@ -34,8 +34,15 @@ if (typeof window !== "undefined") {
 
 function setDiagnosticStage(stage, details = {}) {
   const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
-  if (stage === "LOOKUP_START") {
-    SCRAP_DIAGNOSTIC.stageTimestamps = { LOOKUP_START: now };
+  if (stage === "BOOTSTRAP_START") {
+    SCRAP_DIAGNOSTIC.stageTimestamps = { BOOTSTRAP_START: now };
+    SCRAP_DIAGNOSTIC.elapsedMs = 0;
+    SCRAP_DIAGNOSTIC.lastErrorCode = null;
+    SCRAP_DIAGNOSTIC.lastHttpStatus = null;
+    SCRAP_DIAGNOSTIC.responseOriginHost = null;
+    SCRAP_DIAGNOSTIC.responseContentType = null;
+  } else if (stage === "LOOKUP_START") {
+    SCRAP_DIAGNOSTIC.stageTimestamps.LOOKUP_START = now;
     SCRAP_DIAGNOSTIC.elapsedMs = 0;
     SCRAP_DIAGNOSTIC.lastErrorCode = null;
     SCRAP_DIAGNOSTIC.lastHttpStatus = null;
@@ -43,7 +50,7 @@ function setDiagnosticStage(stage, details = {}) {
     SCRAP_DIAGNOSTIC.responseContentType = null;
   } else {
     SCRAP_DIAGNOSTIC.stageTimestamps[stage] = now;
-    const start = SCRAP_DIAGNOSTIC.stageTimestamps.LOOKUP_START || now;
+    const start = SCRAP_DIAGNOSTIC.stageTimestamps.LOOKUP_START || SCRAP_DIAGNOSTIC.stageTimestamps.BOOTSTRAP_START || now;
     SCRAP_DIAGNOSTIC.elapsedMs = Math.round(now - start);
   }
   SCRAP_DIAGNOSTIC.currentStage = stage;
@@ -116,6 +123,7 @@ class GasClient {
           "GK", "H3", "H6", "HA", "HS", "KK", "PC", "PP", "QB", "RT",
           "SA", "SS", "UA", "UG", "VM", "YT", "YU", "ZZ", "__UNGROUPED__"
         ],
+        selectedFixedItemIds: null,
         preferenceRevision: 1,
         updatedAt: new Date().toISOString()
       }
@@ -357,6 +365,7 @@ class GasClient {
         preference: {
           exists: mockPref.exists,
           selectedMaterialCategories: (mockPref.selectedMaterialCategories || []).slice(),
+          selectedFixedItemIds: mockPref.selectedFixedItemIds !== undefined ? mockPref.selectedFixedItemIds : null,
           preferenceRevision: mockPref.preferenceRevision || 0,
           updatedAt: mockPref.updatedAt || null
         }
@@ -938,17 +947,58 @@ class GasClient {
     }
   }
 
-  // 10.5. 社員別資材カテゴリ設定保存 (POST action=savePreferences) - V3.10
-  async saveEmployeePreferences(empNo, categories, expectedRevision) {
+  // 10.5. 社員別資材カテゴリ & 定型品設定保存 (POST action=savePreferences) - V3.10
+  async saveEmployeePreferences(empNo, categoriesOrPayload, expectedRevision) {
     if (!empNo) {
       return { success: false, error: "MISSING_EMP_NO", message: "社員番号が指定されていません。" };
     }
     const cleanEmpNo = String(empNo).trim().toUpperCase();
-    const cats = Array.isArray(categories) ? categories : [];
+
+    let cats = undefined;
+    let fixedIds = undefined;
+
+    if (Array.isArray(categoriesOrPayload)) {
+      // Legacy / Category-only call signature: (empNo, checkedCats, expectedRev)
+      cats = categoriesOrPayload;
+    } else if (categoriesOrPayload && typeof categoriesOrPayload === "object") {
+      // Extended call signature: (empNo, { selectedMaterialCategories, selectedFixedItemIds }, expectedRev)
+      if (categoriesOrPayload.selectedMaterialCategories !== undefined) {
+        cats = categoriesOrPayload.selectedMaterialCategories;
+      } else if (categoriesOrPayload.categories !== undefined) {
+        cats = categoriesOrPayload.categories;
+      }
+
+      if (categoriesOrPayload.selectedFixedItemIds !== undefined) {
+        fixedIds = categoriesOrPayload.selectedFixedItemIds;
+      } else if (categoriesOrPayload.fixedItemIds !== undefined) {
+        fixedIds = categoriesOrPayload.fixedItemIds;
+      }
+    }
+
+    const reqPayload = {
+      employeeNo: cleanEmpNo,
+      expectedPreferenceRevision: expectedRevision
+    };
+    if (cats !== undefined) {
+      reqPayload.selectedMaterialCategories = Array.isArray(cats) ? cats : [];
+    }
+    if (fixedIds !== undefined) {
+      reqPayload.selectedFixedItemIds = fixedIds;
+    }
 
     if (this.isMockMode) {
       if (!this._mockPreferences) this._mockPreferences = {};
-      const current = this._mockPreferences[cleanEmpNo];
+      const current = this._mockPreferences[cleanEmpNo] || {
+        exists: false,
+        selectedMaterialCategories: [
+          "IQ", "AN", "AJ", "AY", "AZ", "BA", "BC", "CA", "DS", "EA",
+          "GK", "H3", "H6", "HA", "HS", "KK", "PC", "PP", "QB", "RT",
+          "SA", "SS", "UA", "UG", "VM", "YT", "YU", "ZZ", "__UNGROUPED__"
+        ],
+        selectedFixedItemIds: null,
+        preferenceRevision: 0,
+        updatedAt: null
+      };
       const currentRev = (current && typeof current.preferenceRevision === "number") ? current.preferenceRevision : 0;
 
       // 楽観的排他制御 (expectedRevision 指定時)
@@ -964,9 +1014,21 @@ class GasClient {
 
       const newRev = currentRev + 1;
       const nowIso = new Date().toISOString();
+
+      let finalCats = current.selectedMaterialCategories || [];
+      if (cats !== undefined) {
+        finalCats = Array.isArray(cats) ? cats.slice() : [];
+      }
+
+      let finalFixed = current.selectedFixedItemIds !== undefined ? current.selectedFixedItemIds : null;
+      if (fixedIds !== undefined) {
+        finalFixed = Array.isArray(fixedIds) ? fixedIds.slice() : (fixedIds === null ? null : null);
+      }
+
       this._mockPreferences[cleanEmpNo] = {
         exists: true,
-        selectedMaterialCategories: cats.slice(),
+        selectedMaterialCategories: finalCats,
+        selectedFixedItemIds: finalFixed,
         preferenceRevision: newRev,
         updatedAt: nowIso
       };
@@ -976,7 +1038,8 @@ class GasClient {
         mode: "MOCK",
         employeeNo: cleanEmpNo,
         preferenceRevision: newRev,
-        selectedMaterialCategories: cats.slice(),
+        selectedMaterialCategories: finalCats,
+        selectedFixedItemIds: finalFixed,
         updatedAt: nowIso
       };
     }
@@ -996,11 +1059,7 @@ class GasClient {
         headers: { "Content-Type": "text/plain" },
         body: JSON.stringify({
           action: "savePreferences",
-          payload: {
-            employeeNo: cleanEmpNo,
-            selectedMaterialCategories: cats,
-            expectedPreferenceRevision: expectedRevision
-          }
+          payload: reqPayload
         })
       });
 
