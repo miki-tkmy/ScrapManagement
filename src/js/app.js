@@ -446,6 +446,7 @@ function initUserSettings() {
             const activePref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
             window.ACTIVE_ITEMS = applyMaterialCategoryFilter(window.ACTIVE_ALL_ITEMS || [], activePref.categories);
             renderSettingsView();
+            initFixedItemsList();
           }
         }
       }).catch(err => {
@@ -907,6 +908,7 @@ function verifyAndSaveEmployee() {
       const activePref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
       window.ACTIVE_ITEMS = applyMaterialCategoryFilter(window.ACTIVE_ALL_ITEMS || [], activePref.categories);
       renderSettingsView();
+      initFixedItemsList();
 
       // 拠点・社員変更に伴い全キャッシュを破棄
       TerminalStorage.invalidateAllCaches();
@@ -1311,12 +1313,23 @@ function initFixedItemsList() {
     ? window.ACTIVE_FIXED_ITEMS
     : (window.TEST_FIXTURE_FIXED_ITEMS || []);
 
-  const userSettings = TerminalStorage.getUserSettings();
-  const selectedCodes = userSettings.selectedFixedItemCodes || [];
-
-  const visibleList = (selectedCodes.length > 0)
-    ? allFixed.filter(fi => selectedCodes.includes(fi.fixedItemId))
-    : allFixed;
+  let visibleList;
+  if (resolvedEmployeeNo) {
+    const pref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
+    if (pref.exists && pref.fixedItemIds !== null) {
+      const selectedSet = new Set(pref.fixedItemIds);
+      visibleList = allFixed.filter(fi => selectedSet.has(fi.fixedItemId));
+    } else {
+      // 未設定社員: Active Fixed Items全件ON
+      visibleList = allFixed;
+    }
+  } else {
+    const userSettings = TerminalStorage.getUserSettings();
+    const selectedCodes = userSettings.selectedFixedItemCodes || [];
+    visibleList = (selectedCodes.length > 0)
+      ? allFixed.filter(fi => selectedCodes.includes(fi.fixedItemId))
+      : allFixed;
+  }
 
   visibleList.forEach(fi => {
     const tr = document.createElement("tr");
@@ -2980,10 +2993,24 @@ function renderSettingsView() {
     const allFixed = (window.ACTIVE_FIXED_ITEMS && window.ACTIVE_FIXED_ITEMS.length > 0)
       ? window.ACTIVE_FIXED_ITEMS
       : (window.TEST_FIXTURE_FIXED_ITEMS || []);
-    const selectedFixed = userSettings.selectedFixedItemCodes || [];
+
+    let isFixedSelected;
+    if (resolvedEmployeeNo) {
+      const pref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
+      if (pref.exists && pref.fixedItemIds !== null) {
+        const selSet = new Set(pref.fixedItemIds);
+        isFixedSelected = (id) => selSet.has(id);
+      } else {
+        // 未設定 (null) -> 全定型品ON
+        isFixedSelected = () => true;
+      }
+    } else {
+      const selectedFixed = userSettings.selectedFixedItemCodes || [];
+      isFixedSelected = (id) => selectedFixed.length === 0 || selectedFixed.includes(id);
+    }
 
     allFixed.forEach(fi => {
-      const isChecked = selectedFixed.length === 0 || selectedFixed.includes(fi.fixedItemId);
+      const isChecked = isFixedSelected(fi.fixedItemId);
       const label = document.createElement("label");
       label.className = "checkbox-label";
       label.innerHTML = `
@@ -3004,39 +3031,39 @@ function saveCategoryPreferences() {
   }
 
   const checked = (typeof document !== "undefined") ? Array.from(document.querySelectorAll('input[name="material-cat"]:checked')).map(el => el.value) : [];
-
-  // V3.10 CASE A: ネットワーク通信なし (通信 0) で allItems から即座にローカル再フィルタ
   const cachedMasters = TerminalStorage.getMasterCache();
   const allItems = window.ACTIVE_ALL_ITEMS || (cachedMasters && (cachedMasters.allItems || cachedMasters.items)) || [];
-  window.ACTIVE_ITEMS = applyMaterialCategoryFilter(allItems, checked);
-
-  // キャッシュ内の items も最新フィルタ結果に更新
-  if (cachedMasters) {
-    TerminalStorage.saveMasterCache({
-      bases: cachedMasters.bases,
-      allItems: allItems,
-      items: window.ACTIVE_ITEMS,
-      fixedItems: cachedMasters.fixedItems,
-      categories: cachedMasters.categories
-    }, cachedMasters.masterRevision || 1);
-  }
 
   if (resolvedEmployeeNo) {
     const currentPref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
     const expectedRev = currentPref.exists ? currentPref.revision : 0;
 
-    gasClient.saveEmployeePreferences(resolvedEmployeeNo, checked, expectedRev).then(res => {
+    return gasClient.saveEmployeePreferences(resolvedEmployeeNo, { selectedMaterialCategories: checked }, expectedRev).then(res => {
       if (saveBtn) {
         saveBtn.textContent = origBtnText;
         saveBtn.disabled = false;
       }
       if (res && res.success) {
+        // 中央保存成功時のみローカルキャッシュ確定 & UI確定 (定型品設定を維持)
         TerminalStorage.saveEmployeePreferences(resolvedEmployeeNo, {
           exists: true,
           categories: checked,
+          fixedItemIds: currentPref.fixedItemIds,
           revision: res.preferenceRevision,
           updatedAt: res.updatedAt
         });
+
+        window.ACTIVE_ITEMS = applyMaterialCategoryFilter(allItems, checked);
+        if (cachedMasters) {
+          TerminalStorage.saveMasterCache({
+            bases: cachedMasters.bases,
+            allItems: allItems,
+            items: window.ACTIVE_ITEMS,
+            fixedItems: cachedMasters.fixedItems,
+            categories: cachedMasters.categories
+          }, cachedMasters.masterRevision || 1);
+        }
+
         showAppModal({ title: "設定保存", message: "使用資材カテゴリを更新しました。" });
       } else if (res && res.error === "PREFERENCE_REVISION_CONFLICT") {
         showAppModal({
@@ -3044,15 +3071,27 @@ function saveCategoryPreferences() {
           message: "別の端末で設定が更新されています。最新設定を再取得します。"
         });
         // 最新設定を再取得して再描画
-        gasClient.lookupEmployee(resolvedEmployeeNo).then(latestRes => {
+        return gasClient.lookupEmployee(resolvedEmployeeNo).then(latestRes => {
           if (latestRes && latestRes.preference) {
             TerminalStorage.saveEmployeePreferences(resolvedEmployeeNo, latestRes.preference);
-            const activePref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
             renderSettingsView();
-            window.ACTIVE_ITEMS = applyMaterialCategoryFilter(window.ACTIVE_ALL_ITEMS || [], activePref.categories);
+            initFixedItemsList();
+            const activePref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
+            window.ACTIVE_ITEMS = applyMaterialCategoryFilter(allItems, activePref.categories);
+            if (cachedMasters) {
+              TerminalStorage.saveMasterCache({
+                bases: cachedMasters.bases,
+                allItems: allItems,
+                items: window.ACTIVE_ITEMS,
+                fixedItems: cachedMasters.fixedItems,
+                categories: cachedMasters.categories
+              }, cachedMasters.masterRevision || 1);
+            }
           }
         });
       } else {
+        // 保存失敗時: チェックボックスを直前の保存済み設定にロールバック
+        renderSettingsView();
         showAppModal({
           title: "保存エラー",
           message: res ? (res.message || res.error) : "設定の中央保存に失敗しました。"
@@ -3063,6 +3102,8 @@ function saveCategoryPreferences() {
         saveBtn.textContent = origBtnText;
         saveBtn.disabled = false;
       }
+      // 通信失敗時: チェックボックスを直前の保存済み設定にロールバック
+      renderSettingsView();
       showAppModal({
         title: "通信エラー",
         message: "中央サーバーへの保存に失敗しました。電波の良い場所で再度お試しください。"
@@ -3071,6 +3112,16 @@ function saveCategoryPreferences() {
   } else {
     // 社員未設定時はローカルのみ保存
     TerminalStorage.saveUserSettings({ selectedMaterialCategories: checked });
+    window.ACTIVE_ITEMS = applyMaterialCategoryFilter(allItems, checked);
+    if (cachedMasters) {
+      TerminalStorage.saveMasterCache({
+        bases: cachedMasters.bases,
+        allItems: allItems,
+        items: window.ACTIVE_ITEMS,
+        fixedItems: cachedMasters.fixedItems,
+        categories: cachedMasters.categories
+      }, cachedMasters.masterRevision || 1);
+    }
     if (saveBtn) {
       saveBtn.textContent = origBtnText;
       saveBtn.disabled = false;
@@ -3080,10 +3131,86 @@ function saveCategoryPreferences() {
 }
 
 function saveFixedItemPreferences() {
-  const checked = Array.from(document.querySelectorAll('input[name="fixed-item-pref"]:checked')).map(el => el.value);
-  TerminalStorage.saveUserSettings({ selectedFixedItemCodes: checked });
-  initFixedItemsList();
-  showAppModal({ title: "設定保存", message: "使用定型品設定を更新しました。" });
+  const saveBtn = (typeof document !== "undefined") ? (document.querySelector('button[onclick="saveFixedItemPreferences()"]') || document.getElementById("btn-save-fixed-items")) : null;
+  const origBtnText = saveBtn ? saveBtn.textContent : "";
+  if (saveBtn) {
+    saveBtn.textContent = "保存中…";
+    saveBtn.disabled = true;
+  }
+
+  const checked = (typeof document !== "undefined")
+    ? Array.from(document.querySelectorAll('input[name="fixed-item-pref"]:checked')).map(el => el.value)
+    : [];
+
+  if (resolvedEmployeeNo) {
+    const currentPref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
+    const expectedRev = currentPref.exists ? currentPref.revision : 0;
+
+    return gasClient.saveEmployeePreferences(resolvedEmployeeNo, { selectedFixedItemIds: checked }, expectedRev).then(res => {
+      if (saveBtn) {
+        saveBtn.textContent = origBtnText;
+        saveBtn.disabled = false;
+      }
+      if (res && res.success) {
+        // 中央保存成功時のみローカルキャッシュ確定 & UI確定 (カテゴリ設定を維持)
+        TerminalStorage.saveEmployeePreferences(resolvedEmployeeNo, {
+          exists: true,
+          categories: currentPref.categories,
+          fixedItemIds: checked,
+          revision: res.preferenceRevision,
+          updatedAt: res.updatedAt
+        });
+
+        initFixedItemsList();
+        showAppModal({ title: "設定保存", message: "使用定型品設定を更新しました。" });
+      } else if (res && res.error === "PREFERENCE_REVISION_CONFLICT") {
+        showAppModal({
+          title: "設定競合",
+          message: "別の端末で設定が更新されています。最新設定を再取得します。"
+        });
+        // 最新設定を再取得して再描画
+        return gasClient.lookupEmployee(resolvedEmployeeNo).then(latestRes => {
+          if (latestRes && latestRes.preference) {
+            TerminalStorage.saveEmployeePreferences(resolvedEmployeeNo, latestRes.preference);
+            renderSettingsView();
+            initFixedItemsList();
+            const cachedMasters = TerminalStorage.getMasterCache();
+            const allItems = window.ACTIVE_ALL_ITEMS || (cachedMasters && (cachedMasters.allItems || cachedMasters.items)) || [];
+            const activePref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
+            window.ACTIVE_ITEMS = applyMaterialCategoryFilter(allItems, activePref.categories);
+          }
+        });
+      } else {
+        // 保存失敗時: チェックボックスを直前の保存済み設定にロールバック
+        renderSettingsView();
+        showAppModal({
+          title: "保存エラー",
+          message: res ? (res.message || res.error) : "定型品設定の中央保存に失敗しました。"
+        });
+      }
+    }).catch(err => {
+      if (saveBtn) {
+        saveBtn.textContent = origBtnText;
+        saveBtn.disabled = false;
+      }
+      // 通信失敗時: チェックボックスを直前の保存済み設定にロールバック
+      renderSettingsView();
+      showAppModal({
+        title: "通信エラー",
+        message: "中央サーバーへの保存に失敗しました。電波の良い場所で再度お試しください。"
+      });
+    });
+  } else {
+    // 社員未設定時はローカルのみ保存
+    TerminalStorage.saveUserSettings({ selectedFixedItemCodes: checked });
+    initFixedItemsList();
+    if (saveBtn) {
+      saveBtn.textContent = origBtnText;
+      saveBtn.disabled = false;
+    }
+    showAppModal({ title: "設定保存", message: "使用定型品設定を更新しました。" });
+    return Promise.resolve();
+  }
 }
 
 // 18. タブ切り替え (Lazy Loading & 社員設定ガード対応)
@@ -3211,6 +3338,9 @@ if (typeof module !== "undefined" && module.exports) {
     startMasterSynchronization,
     runBootstrapSequence,
     initGasClient,
+    initFixedItemsList,
+    renderSettingsView,
+    saveFixedItemPreferences,
     getGasClientInstance: () => gasClient,
     setGasClientInstance: (c) => { gasClient = c; }
   };
@@ -3222,6 +3352,10 @@ if (typeof window !== "undefined") {
   window.initializeGasClientInstance = initializeGasClientInstance;
   window.startMasterSynchronization = startMasterSynchronization;
   window.runBootstrapSequence = runBootstrapSequence;
+  window.initFixedItemsList = initFixedItemsList;
+  window.renderSettingsView = renderSettingsView;
+  window.saveCategoryPreferences = saveCategoryPreferences;
+  window.saveFixedItemPreferences = saveFixedItemPreferences;
 }
 
 
