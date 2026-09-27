@@ -1256,6 +1256,32 @@ body.modal-open {
   to { transform: rotate(360deg); }
 }
 
+/* アクションボタン (一時保存 / 完了) 専用 ローディングスピナー */
+.btn-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: status-spin 0.8s linear infinite;
+  vertical-align: -2px;
+  margin-right: 6px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.btn-secondary .btn-spinner {
+  border-color: rgba(0, 0, 0, 0.18);
+  border-top-color: currentColor;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-spinner, .status-spinner-sm {
+    animation-duration: 2s;
+  }
+}
+
 /* 初回読み込み用 ブロッキング ローディングオーバーレイ (Cache なし時のみ) */
 .master-loading-overlay {
   position: fixed;
