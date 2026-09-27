@@ -1654,8 +1654,8 @@ function handleFinalizeButton() {
     return;
   }
 
-  const baseCodeVal = resolvedBaseCode;
-  const baseNameVal = resolvedBaseName;
+  const baseCodeVal = workingBaseCode;
+  const baseNameVal = workingBaseName;
   const staffNameVal = resolvedEmployeeName;
   const vendorNameVal = document.getElementById("vendor-name-input").value.trim();
 
@@ -1786,14 +1786,15 @@ function executeFinalize(isWithoutSignature, signatureDataUrl = null) {
     return;
   }
 
-  const baseCodeVal = resolvedBaseCode;
-  const baseNameVal = resolvedBaseName;
+  const baseCodeVal = workingBaseCode;
+  const baseNameVal = workingBaseName;
   const staffNameVal = resolvedEmployeeName;
   const vendorNameVal = document.getElementById("vendor-name-input").value.trim();
 
   const fixedItems = collectFixedItems();
   const weightSummary = WeightEngine.calculateEstimatedWeight(currentCodeItems);
   const now = new Date().toISOString();
+  const finalDate = currentResumedDraftDate || getJstDateString();
 
   if (!pendingFinalizeSlip) {
     const secureId = generateSecureScrapId();
@@ -1803,7 +1804,7 @@ function executeFinalize(isWithoutSignature, signatureDataUrl = null) {
       slipId: secureId,
       sourceDraftId: currentResumedDraftId || null,
       createdAt: now,
-      date: now.slice(0, 10),
+      date: finalDate,
       status: "FINAL",
       baseCode: baseCodeVal,
       baseName: baseNameVal,
@@ -1864,8 +1865,8 @@ function executeFinalize(isWithoutSignature, signatureDataUrl = null) {
     currentResumedDraftDate = null;
     TerminalStorage.clearLocalDraft();
 
-    // 履歴キャッシュは必ず無効化
-    TerminalStorage.invalidateHistoryCache(resolvedBaseCode);
+    // 履歴キャッシュは必ず無効化 (Working Base 基準)
+    TerminalStorage.invalidateHistoryCache(baseCodeVal);
 
     // 集計キャッシュは affectsMaterialSummary === true の場合のみ無効化 (Backendレスポンス優先、ローカル判定フォールバック)
     const shouldInvalidateMaterialSummary = (res && typeof res.affectsMaterialSummary === "boolean")
@@ -1875,13 +1876,13 @@ function executeFinalize(isWithoutSignature, signatureDataUrl = null) {
         : checkIfSlipAffectsSummary(slipRecord));
 
     if (shouldInvalidateMaterialSummary) {
-      TerminalStorage.invalidateSummaryCache(resolvedBaseCode);
+      TerminalStorage.invalidateSummaryCache(baseCodeVal);
     } else {
       // 資材に影響しないFINAL (定型品のみ、その他のみ、一式のみ):
       // 集計キャッシュを温存し、総伝票数のみローカルキャッシュで高速加算 (Optional Fast Local Count)
       const fromDate = document.getElementById("summary-from-date") ? document.getElementById("summary-from-date").value : "";
       const toDate = document.getElementById("summary-to-date") ? document.getElementById("summary-to-date").value : "";
-      const cached = TerminalStorage.getSummaryCache(resolvedBaseCode, fromDate, toDate);
+      const cached = TerminalStorage.getSummaryCache(baseCodeVal, fromDate, toDate);
       if (cached) {
         // Section 10: 冪等性チェック (重複確定/リトライ時は二重加算しない)
         const isDuplicateFinal = res.status === "ALREADY_FINALIZED" || res.duplicatePrevented === true;
@@ -1891,7 +1892,7 @@ function executeFinalize(isWithoutSignature, signatureDataUrl = null) {
 
         if (!isDuplicateFinal && inRange) {
           const curCount = cached.totalSlipsCount !== undefined ? cached.totalSlipsCount : (cached.data && cached.data.totalSlipsCount ? cached.data.totalSlipsCount : 0);
-          TerminalStorage.updateSummaryCountInCache(resolvedBaseCode, fromDate, toDate, curCount + 1, res.slipCountRevision);
+          TerminalStorage.updateSummaryCountInCache(baseCodeVal, fromDate, toDate, curCount + 1, res.slipCountRevision);
         }
       }
     }
@@ -2042,8 +2043,9 @@ function handleCompletionConfirm() {
   }
 
   // 3. 履歴キャッシュ無効化確認 (直前伝票を確実に最新取得)
-  if (resolvedBaseCode) {
-    TerminalStorage.invalidateHistoryCache(resolvedBaseCode);
+  const activeBase = workingBaseCode || resolvedBaseCode;
+  if (activeBase) {
+    TerminalStorage.invalidateHistoryCache(activeBase);
   }
 
   // 4. 入力内容のクリーンアップ
