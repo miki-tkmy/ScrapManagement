@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>ScrapManagement - スクラップ処分記録</title>
-  <link rel="stylesheet" href="src/css/style.css">
+  <link rel="stylesheet" href="src/css/style.css?v=p08_draft_resume_20260927_03">
   <link rel="stylesheet" href="src/css/print.css" media="print">
 </head>
 <body>
@@ -193,8 +193,9 @@
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:0.4rem; vertical-align:text-bottom;"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
             業者署名を入力する
           </button>
-          <div style="margin-top:0.5rem; font-size:0.8rem; color:var(--color-text-muted);">
-            ※ 署名なしでも完了可能です (印刷後に手書き署名可)
+          <div style="margin-top:0.5rem; font-size:0.8rem; color:var(--color-text-muted); line-height:1.4;">
+            ※ 署名なしでも完了可能です (印刷後に手書き署名可)<br>
+            ※ 署名は一時保存されません。伝票を確定する前に再度入力してください。
           </div>
         </div>
 
@@ -206,6 +207,9 @@
           <div class="signature-signed-actions">
             <button type="button" class="btn btn-secondary btn-sm" id="btn-re-signature" onclick="openSignatureModal()">入力する</button>
             <button type="button" class="btn btn-danger btn-sm" id="btn-clear-signature" onclick="confirmClearSignature()">解除</button>
+          </div>
+          <div style="margin-top:0.4rem; font-size:0.75rem; color:var(--color-text-muted);">
+            ※ 署名は一時保存されません。伝票を確定する前に再度入力してください。
           </div>
         </div>
       </div>
@@ -395,7 +399,7 @@
         <!-- Frontend Build ID 常時表示 -->
         <div class="settings-section" style="border-top:1px solid var(--color-border); padding-top:1rem; margin-top:1rem; text-align:center;">
           <div id="frontend-build-id-display" style="font-size:0.75rem; color:var(--color-text-muted); font-family:monospace;">
-            Build: P08-DRAFT-RESUME-20260927-02
+            Build: P08-DRAFT-RESUME-20260927-03
           </div>
         </div>
       </div>
@@ -550,18 +554,18 @@
   </div>
 
   <!-- スクリプト読み込み (依存順) -->
-  <script src="src/js/config.js?v=p08_draft_resume_20260927_02"></script>
-  <script src="src/js/fixtures.js?v=p08_draft_resume_20260927_02"></script>
-  <script src="src/js/baseService.js?v=p08_draft_resume_20260927_02"></script>
-  <script src="src/js/itemService.js?v=p08_draft_resume_20260927_02"></script>
-  <script src="src/js/quantityEngine.js?v=p08_draft_resume_20260927_02"></script>
-  <script src="src/js/weightEngine.js?v=p08_draft_resume_20260927_02"></script>
-  <script src="src/js/signatureHelper.js?v=p08_draft_resume_20260927_02"></script>
-  <script src="src/js/signature.js?v=p08_draft_resume_20260927_02"></script>
-  <script src="src/js/gasClient-gate3a7-fixpref-20260927.js?v=p08_draft_resume_20260927_02"></script>
-  <script src="src/js/storage.js?v=p08_draft_resume_20260927_02"></script>
-  <script src="src/js/validator.js?v=p08_draft_resume_20260927_02"></script>
-  <script src="src/js/app.js?v=p08_draft_resume_20260927_02"></script>
+  <script src="src/js/config.js?v=p08_draft_resume_20260927_03"></script>
+  <script src="src/js/fixtures.js?v=p08_draft_resume_20260927_03"></script>
+  <script src="src/js/baseService.js?v=p08_draft_resume_20260927_03"></script>
+  <script src="src/js/itemService.js?v=p08_draft_resume_20260927_03"></script>
+  <script src="src/js/quantityEngine.js?v=p08_draft_resume_20260927_03"></script>
+  <script src="src/js/weightEngine.js?v=p08_draft_resume_20260927_03"></script>
+  <script src="src/js/signatureHelper.js?v=p08_draft_resume_20260927_03"></script>
+  <script src="src/js/signature.js?v=p08_draft_resume_20260927_03"></script>
+  <script src="src/js/gasClient-gate3a7-fixpref-20260927.js?v=p08_draft_resume_20260927_03"></script>
+  <script src="src/js/storage.js?v=p08_draft_resume_20260927_03"></script>
+  <script src="src/js/validator.js?v=p08_draft_resume_20260927_03"></script>
+  <script src="src/js/app.js?v=p08_draft_resume_20260927_03"></script>
 </body>
 </html>
 
