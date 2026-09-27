@@ -7,7 +7,7 @@
 // - 中央履歴 (fetchHistory), 伝票詳細 (fetchSlip), 中央集計 (fetchSummary), 社員照会 (lookupEmployee)
 // ========================================================================================
 
-const SCRAP_FRONTEND_BUILD_ID = "GATE3A7-FIXPREF-20260926-01";
+const SCRAP_FRONTEND_BUILD_ID = "P08-DRAFT-RESUME-20260927-02";
 if (typeof window !== "undefined") {
   window.SCRAP_FRONTEND_BUILD_ID = SCRAP_FRONTEND_BUILD_ID;
 }
@@ -811,18 +811,68 @@ class GasClient {
   // 9. 下書き保存 (POST action=draft)
   async saveDraft(draftPayload) {
     if (this.isMockMode) {
-      const scrapId = draftPayload.scrapId || draftPayload.slipId || `DRAFT-${Date.now()}`;
       const b = draftPayload.baseCode || "GLOBAL";
+      const rawDraftId = String(draftPayload.draftId || draftPayload.scrapId || draftPayload.slipId || "").trim();
+      let isUpdate = false;
+      let draftId = rawDraftId;
+
+      if (rawDraftId) {
+        const idx = (this.mockSlips || []).findIndex(s => s.scrapId === rawDraftId || s.slipId === rawDraftId || s.slipNo === rawDraftId);
+        if (idx >= 0) {
+          if (this.mockSlips[idx].status === "FINAL") {
+            return { success: false, mode: "MOCK", error: "CANNOT_MODIFY_FINAL_SLIP", message: "確定済みの伝票は更新できません。" };
+          }
+          if (this.mockSlips[idx].baseCode !== b) {
+            return { success: false, mode: "MOCK", error: "BASE_SCOPE_VIOLATION", message: "他拠点の下書きは更新できません。" };
+          }
+          if (this.mockSlips[idx].status !== "DRAFT") {
+            return { success: false, mode: "MOCK", error: "DRAFT_NOT_FOUND", message: "更新対象の下書きが見つかりません。" };
+          }
+          isUpdate = true;
+          this.mockSlips[idx] = Object.assign({}, this.mockSlips[idx], draftPayload, {
+            slipNo: rawDraftId,
+            slipId: rawDraftId,
+            scrapId: rawDraftId,
+            status: "DRAFT",
+            updatedAt: new Date().toISOString()
+          });
+        } else {
+          return { success: false, mode: "MOCK", error: "DRAFT_NOT_FOUND", message: "指定された下書きが見つかりません。" };
+        }
+      } else {
+        const uuid = (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
+        draftId = `DRAFT-${uuid}`;
+        const newSlip = Object.assign({}, draftPayload, {
+          slipNo: draftId,
+          slipId: draftId,
+          scrapId: draftId,
+          status: "DRAFT",
+          signatureStatus: "NONE",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          finalizedAt: ""
+        });
+        if (!this.mockSlips) this.mockSlips = [];
+        this.mockSlips.push(newSlip);
+      }
+
+      if (!this._mockRevisions.historyRevisions) this._mockRevisions.historyRevisions = {};
       if (!this._mockRevisions.historyRevisions[b]) this._mockRevisions.historyRevisions[b] = 1;
       this._mockRevisions.historyRevisions[b]++;
+
       return {
         success: true,
         mode: "MOCK",
-        status: "DRAFT_SAVED",
-        scrapId: scrapId,
-        slipId: scrapId,
+        status: isUpdate ? "DRAFT_UPDATED" : "DRAFT_SAVED",
+        draftId: draftId,
+        scrapId: draftId,
+        slipId: draftId,
+        slipNo: draftId,
         savedAt: new Date().toISOString(),
-        createdBy: draftPayload.employeeNo || ""
+        createdBy: draftPayload.employeeNo || "",
+        historyRevision: this._mockRevisions.historyRevisions[b]
       };
     }
 
@@ -882,26 +932,32 @@ class GasClient {
       const cleanEmployeeNo = String(employeeNo).trim();
 
       // MOCK slips から検索
-      const idx = (this.mockSlips || []).findIndex(s => s.scrapId === cleanScrapId || s.slipId === cleanScrapId);
-      if (idx >= 0) {
-        const target = this.mockSlips[idx];
-        if (target.status === "FINAL") {
-          return { success: false, error: "CANNOT_DELETE_FINAL_SLIP", message: "FINAL slips cannot be deleted." };
-        }
-        if (target.baseCode !== cleanBaseCode) {
-          return { success: false, error: "BASE_SCOPE_VIOLATION", message: "Cannot delete draft belonging to another base." };
-        }
-        this.mockSlips[idx].status = "DRAFT_DELETED";
-        this.mockSlips[idx].deletedBy = cleanEmployeeNo;
+      const idx = (this.mockSlips || []).findIndex(s => s.scrapId === cleanScrapId || s.slipId === cleanScrapId || s.slipNo === cleanScrapId);
+      if (idx < 0) {
+        return { success: false, mode: "MOCK", error: "DRAFT_NOT_FOUND", message: "下書きが見つかりません。" };
       }
+      const target = this.mockSlips[idx];
+      if (target.status === "FINAL") {
+        return { success: false, mode: "MOCK", error: "CANNOT_DELETE_FINAL_SLIP", message: "FINAL slips cannot be deleted." };
+      }
+      if (target.baseCode !== cleanBaseCode) {
+        return { success: false, mode: "MOCK", error: "BASE_SCOPE_VIOLATION", message: "Cannot delete draft belonging to another base." };
+      }
+      if (target.status !== "DRAFT") {
+        return { success: false, mode: "MOCK", error: "DRAFT_NOT_FOUND", message: "下書きが見つかりません。" };
+      }
+      this.mockSlips[idx].status = "DRAFT_DELETED";
+      this.mockSlips[idx].deletedBy = cleanEmployeeNo;
+      this.mockSlips[idx].updatedAt = new Date().toISOString();
 
       if (typeof window !== "undefined" && window.TerminalStorage) {
         const local = window.TerminalStorage.getLocalDraft();
-        if (local && (local.scrapId === cleanScrapId || local.slipId === cleanScrapId)) {
+        if (local && (local.scrapId === cleanScrapId || local.slipId === cleanScrapId || local.draftId === cleanScrapId)) {
           window.TerminalStorage.clearLocalDraft();
         }
       }
 
+      if (!this._mockRevisions.historyRevisions) this._mockRevisions.historyRevisions = {};
       if (!this._mockRevisions.historyRevisions[cleanBaseCode]) this._mockRevisions.historyRevisions[cleanBaseCode] = 1;
       this._mockRevisions.historyRevisions[cleanBaseCode]++;
 
@@ -910,8 +966,10 @@ class GasClient {
         mode: "MOCK",
         status: "DRAFT_DELETED",
         scrapId: cleanScrapId,
+        draftId: cleanScrapId,
         deletedAt: new Date().toISOString(),
-        deletedBy: cleanEmployeeNo
+        deletedBy: cleanEmployeeNo,
+        historyRevision: this._mockRevisions.historyRevisions[cleanBaseCode]
       };
     }
 
@@ -1127,6 +1185,15 @@ class GasClient {
         this._mockRevisions.materialSummaryRevisions[baseCode]++;
         if (!this._mockRevisions.summaryRevisions) this._mockRevisions.summaryRevisions = {};
         this._mockRevisions.summaryRevisions[baseCode] = this._mockRevisions.materialSummaryRevisions[baseCode];
+      }
+
+      const sourceDraftId = String(finalPayload.sourceDraftId || finalPayload.scrapId || "").trim();
+      if (sourceDraftId && sourceDraftId !== slipNo) {
+        const dIdx = (this.mockSlips || []).findIndex(s => (s.scrapId === sourceDraftId || s.slipId === sourceDraftId || s.slipNo === sourceDraftId) && s.status === "DRAFT");
+        if (dIdx >= 0) {
+          this.mockSlips[dIdx].status = "DRAFT_FINALIZED";
+          this.mockSlips[dIdx].updatedAt = new Date().toISOString();
+        }
       }
 
       return {

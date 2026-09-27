@@ -1,4 +1,4 @@
-// 開発・受入テスト用 TEST_FIXTURE (Central DB Master と分離)
+﻿// 開発・受入テスト用 TEST_FIXTURE (Central DB Master と分離)
 const TEST_FIXTURE_BASES = [
   { baseCode: "B01", baseName: "仙台Base", region: "東北", active: true },
   { baseCode: "B02", baseName: "盛岡Base", region: "東北", active: true },
@@ -40,8 +40,8 @@ const TEST_FIXTURE_ITEMS = [
   { itemCode: "CLFX01", itemName: "直交クランプ (48.6/42.7兼用)", unitWeightKg: 0.70, active: true },
   { itemCode: "CLSW01", itemName: "自在クランプ (48.6/42.7兼用)", unitWeightKg: 0.70, active: true },
   { itemCode: "PLST40", itemName: "鋼製足場板 4.0m (幅240mm)", unitWeightKg: 13.50, active: true },
-  { itemCode: "NOWT01", itemName: "特殊変形金具 (重量未登録品)", unitWeightKg: 0, active: true },
-  { itemCode: "NOWT02", itemName: "旧規格ブラケット (重量空欄品)", unitWeightKg: null, active: true }
+  { itemCode: "NOWT01", itemName: "特殊変形金具 (重量未登録品)", unitWeightKg: 0, active: true }, // 未登録テスト用
+  { itemCode: "NOWT02", itemName: "旧規格ブラケット (重量空欄品)", unitWeightKg: null, active: true } // 未登録テスト用
 ];
 
 const TEST_FIXTURE_FIXED_ITEMS = [
@@ -57,9 +57,9 @@ if (typeof module !== "undefined" && module.exports) {
     TEST_FIXTURE_FIXED_ITEMS
   };
 }
-
 if (typeof window !== "undefined") {
   window.TEST_FIXTURE_BASES = TEST_FIXTURE_BASES;
   window.TEST_FIXTURE_ITEMS = TEST_FIXTURE_ITEMS;
   window.TEST_FIXTURE_FIXED_ITEMS = TEST_FIXTURE_FIXED_ITEMS;
 }
+

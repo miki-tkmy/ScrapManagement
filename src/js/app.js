@@ -25,6 +25,8 @@ let lastFinalizedSlipData = null;
 let centralHistorySlips = [];
 let centralDraftSlips = [];
 let currentSummaryData = null;
+let currentResumedDraftId = null;
+let currentResumedDraftDate = null;
 
 // 社員設定 (所属Base vs 入力Base 分離)
 let resolvedEmployeeNo = "";
@@ -661,6 +663,8 @@ function clearTransactionData() {
 
   TerminalStorage.clearLocalDraft();
   pendingFinalizeSlip = null;
+  currentResumedDraftId = null;
+  currentResumedDraftDate = null;
 }
 
 // Working Base 変更適用
@@ -1750,6 +1754,7 @@ function executeFinalize(isWithoutSignature, signatureDataUrl = null) {
     pendingFinalizeSlip = {
       scrapId: secureId,
       slipId: secureId,
+      sourceDraftId: currentResumedDraftId || null,
       createdAt: now,
       date: now.slice(0, 10),
       status: "FINAL",
@@ -1804,6 +1809,8 @@ function executeFinalize(isWithoutSignature, signatureDataUrl = null) {
       slipRecord.scrapId = res.scrapId;
     }
     lastFinalizedSlipData = slipRecord;
+    currentResumedDraftId = null;
+    currentResumedDraftDate = null;
     TerminalStorage.clearLocalDraft();
 
     // 履歴キャッシュは必ず無効化
@@ -2023,14 +2030,18 @@ function saveTemporaryDraft() {
     return;
   }
 
-  const baseCodeVal = resolvedBaseCode;
-  const baseNameVal = resolvedBaseName;
+  // Working Base snapshot (所属Base ではなく workingBaseCode/workingBaseName を使用)
+  const baseCodeVal = workingBaseCode;
+  const baseNameVal = workingBaseName;
   const staffNameVal = resolvedEmployeeName;
-  const vendorNameVal = document.getElementById("vendor-name-input").value.trim();
-  const todayJst = getJstDateString();
+  const vendorNameVal = document.getElementById("vendor-name-input") ? document.getElementById("vendor-name-input").value.trim() : "";
+  const dateVal = currentResumedDraftDate || getJstDateString();
 
   const draftData = {
-    date: todayJst, // JST 当日日付を処分日として明示保存 (savedAt の代用禁止)
+    draftId: currentResumedDraftId || null,
+    slipId: currentResumedDraftId || null,
+    scrapId: currentResumedDraftId || null,
+    date: dateVal,
     baseCode: baseCodeVal,
     baseName: baseNameVal,
     staffName: staffNameVal,
@@ -2047,6 +2058,8 @@ function saveTemporaryDraft() {
       TerminalStorage.clearLocalDraft();
       // 履歴キャッシュを無効化
       TerminalStorage.invalidateHistoryCache(baseCodeVal);
+      currentResumedDraftId = null;
+      currentResumedDraftDate = null;
       try {
         sessionStorage.setItem("scrap_draft_saved_success", "true");
       } catch (e) {
@@ -2075,17 +2088,29 @@ function resumeDraftSlip(slipId) {
   gasClient.fetchSlip(slipId).then(res => {
     if (res && res.success && res.slip) {
       const s = res.slip;
-      currentCodeItems = Array.isArray(s.codeItems) ? s.codeItems : [];
-      currentOtherItems = Array.isArray(s.otherItems) ? s.otherItems : [];
+      currentResumedDraftId = s.slipNo || s.slipId || s.scrapId || slipId;
+      currentResumedDraftDate = s.date || null;
 
+      // 1. Working Base の復元 (所属Baseは変更せず、Working Base のみ切り替え)
+      if (s.baseCode && s.baseName) {
+        updateWorkingBaseState(s.baseCode, s.baseName, true);
+      }
+
+      // 2. 引取業者名の復元
       const vendorInput = document.getElementById("vendor-name-input");
       if (vendorInput) vendorInput.value = s.vendorName || "";
 
-      // 定型品復元
+      // 3. CODE資材の復元
+      currentCodeItems = Array.isArray(s.codeItems) ? s.codeItems : [];
+
+      // 4. 定型品の復元
       (s.fixedItems || []).forEach(fi => {
         const input = document.getElementById(`fixed-qty-${fi.fixedItemId}`);
         if (input) input.value = fi.quantityInput || "";
       });
+
+      // 5. その他品目の復元
+      currentOtherItems = Array.isArray(s.otherItems) ? s.otherItems : [];
 
       renderCodeItemsTable();
       renderOtherItemsTable();
@@ -2110,14 +2135,20 @@ function confirmDeleteDraft(draftId) {
 
 function executeDeleteDraft(draftId) {
   if (!draftId) return;
-  const baseCode = resolvedBaseCode;
+  const baseCode = workingBaseCode || resolvedBaseCode;
 
   gasClient.deleteDraft({
     scrapId: draftId,
+    draftId: draftId,
+    slipId: draftId,
     baseCode: baseCode,
     employeeNo: resolvedEmployeeNo
   }).then(res => {
     if (res && res.success) {
+      if (currentResumedDraftId === draftId) {
+        currentResumedDraftId = null;
+        currentResumedDraftDate = null;
+      }
       // 一覧から即時消える
       centralDraftSlips = (centralDraftSlips || []).filter(d => (d.slipId !== draftId && d.scrapId !== draftId));
       renderDraftSection(centralDraftSlips);
@@ -2252,16 +2283,17 @@ function renderHistoryTable() {
   const tbody = document.getElementById("history-table-tbody");
   if (!tbody) return;
 
-  if (!resolvedBaseCode) {
+  const activeBaseCode = workingBaseCode || resolvedBaseCode;
+  if (!activeBaseCode) {
     tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--color-text-muted); padding:2rem;">
-      <p style="font-weight:bold; margin-bottom:0.5rem;">社員設定が登録されていません</p>
-      <p style="font-size:0.85rem; margin:0;">「設定」タブで社員番号を登録すると、所属拠点の履歴が表示されます。</p>
+      <p style="font-weight:bold; margin-bottom:0.5rem;">社員設定または入力Baseが未設定です</p>
+      <p style="font-size:0.85rem; margin:0;">「設定」タブで社員番号を登録し、入力Baseを選択してください。</p>
     </td></tr>`;
     renderDraftSection([]);
     return;
   }
 
-  const baseCode = resolvedBaseCode;
+  const baseCode = activeBaseCode;
 
   // 1. キャッシュチェック (Fast Path)
   const cached = TerminalStorage.getHistoryCache(baseCode);
@@ -3341,6 +3373,11 @@ if (typeof module !== "undefined" && module.exports) {
     initFixedItemsList,
     renderSettingsView,
     saveFixedItemPreferences,
+    saveTemporaryDraft,
+    resumeDraftSlip,
+    executeDeleteDraft,
+    getCurrentResumedDraftId: () => currentResumedDraftId,
+    setCurrentResumedDraftId: (id) => { currentResumedDraftId = id; },
     getGasClientInstance: () => gasClient,
     setGasClientInstance: (c) => { gasClient = c; }
   };
@@ -3356,6 +3393,11 @@ if (typeof window !== "undefined") {
   window.renderSettingsView = renderSettingsView;
   window.saveCategoryPreferences = saveCategoryPreferences;
   window.saveFixedItemPreferences = saveFixedItemPreferences;
+  window.saveTemporaryDraft = saveTemporaryDraft;
+  window.resumeDraftSlip = resumeDraftSlip;
+  window.executeDeleteDraft = executeDeleteDraft;
+  window.getCurrentResumedDraftId = () => currentResumedDraftId;
+  window.setCurrentResumedDraftId = (id) => { currentResumedDraftId = id; };
 }
 
 
