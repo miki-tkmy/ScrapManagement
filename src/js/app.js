@@ -1700,17 +1700,64 @@ function closeNoSignatureModal() {
   document.body.classList.remove("modal-open");
 }
 
+function setSubmissionBusy(mode, busy) {
+  const draftBtn = document.getElementById("btn-save-draft");
+  const finalizeBtn = document.getElementById("btn-finalize");
+  const modalFinalizeBtn = document.getElementById("btn-modal-finalize");
+  const fullClearBtn = document.getElementById("btn-full-clear");
+
+  if (busy) {
+    if (draftBtn) {
+      draftBtn.disabled = true;
+      if (mode === "draft") {
+        draftBtn.setAttribute("aria-busy", "true");
+        draftBtn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>保存中...';
+      }
+    }
+    if (finalizeBtn) {
+      finalizeBtn.disabled = true;
+      if (mode === "final") {
+        finalizeBtn.setAttribute("aria-busy", "true");
+        finalizeBtn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>完了処理中...';
+      }
+    }
+    if (modalFinalizeBtn) {
+      modalFinalizeBtn.disabled = true;
+      if (mode === "final") {
+        modalFinalizeBtn.setAttribute("aria-busy", "true");
+        modalFinalizeBtn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>完了処理中...';
+      }
+    }
+    if (fullClearBtn) {
+      fullClearBtn.disabled = true;
+    }
+  } else {
+    if (draftBtn) {
+      draftBtn.disabled = false;
+      draftBtn.removeAttribute("aria-busy");
+      draftBtn.textContent = "一時保存";
+      draftBtn.innerHTML = "一時保存";
+    }
+    if (finalizeBtn) {
+      finalizeBtn.disabled = false;
+      finalizeBtn.removeAttribute("aria-busy");
+      finalizeBtn.textContent = "完了";
+      finalizeBtn.innerHTML = "完了";
+    }
+    if (modalFinalizeBtn) {
+      modalFinalizeBtn.disabled = false;
+      modalFinalizeBtn.removeAttribute("aria-busy");
+      modalFinalizeBtn.textContent = "署名なしで完了";
+      modalFinalizeBtn.innerHTML = "署名なしで完了";
+    }
+    if (fullClearBtn) {
+      fullClearBtn.disabled = false;
+    }
+  }
+}
+
 function setFinalizeButtonsDisabled(disabled) {
-  const btn = document.getElementById("btn-finalize");
-  const modalBtn = document.getElementById("btn-modal-finalize");
-  if (btn) {
-    btn.disabled = disabled;
-    btn.textContent = disabled ? "完了処理中..." : "完了";
-  }
-  if (modalBtn) {
-    modalBtn.disabled = disabled;
-    modalBtn.textContent = disabled ? "完了処理中..." : "署名なしで完了";
-  }
+  setSubmissionBusy("final", disabled);
 }
 
 function generateSecureScrapId() {
@@ -1774,7 +1821,7 @@ function executeFinalize(isWithoutSignature, signatureDataUrl = null) {
   }
 
   const slipRecord = pendingFinalizeSlip;
-  setFinalizeButtonsDisabled(true);
+  setSubmissionBusy("final", true);
 
   const t1 = (typeof performance !== "undefined" && performance.timeOrigin) ? (performance.timeOrigin + performance.now()) : Date.now();
   const tFinalizeStart = performance.now();
@@ -1790,13 +1837,17 @@ function executeFinalize(isWithoutSignature, signatureDataUrl = null) {
       console.log(`[app.js] Finalize roundtrip: ${finalizeRoundtripMs}ms`);
     }
 
-    setFinalizeButtonsDisabled(false);
     if (!res || !res.success) {
+      setSubmissionBusy("final", false);
       const errMsg = res ? (res.error || res.message) : "Unknown error";
       console.error("[app.js] Finalize failed:", errMsg);
+      let failMessage = "バックエンドへの登録が完了していません。\n通信状態を確認の上、再度お試しください。";
+      if (res && res.error) {
+        failMessage += `\n\nエラーコード: ${res.error}`;
+      }
       showAppModal({
         title: "登録に失敗しました",
-        message: "STAGING バックエンドへの登録が完了していません。通信状態を確認の上、再度お試しください。"
+        message: failMessage
       });
       return;
     }
@@ -1861,7 +1912,7 @@ function executeFinalize(isWithoutSignature, signatureDataUrl = null) {
     // 実際のページ再読込を実行 (実ページ更新 + 入力内容クリア)
     window.location.reload();
   }).catch(err => {
-    setFinalizeButtonsDisabled(false);
+    setSubmissionBusy("final", false);
     console.error("[app.js] Finalize network error:", err);
     showAppModal({
       title: "通信エラー",
@@ -2053,6 +2104,8 @@ function saveTemporaryDraft() {
     savedAt: new Date().toISOString()
   };
 
+  setSubmissionBusy("draft", true);
+
   gasClient.saveDraft(draftData).then(res => {
     if (res && res.success) {
       TerminalStorage.clearLocalDraft();
@@ -2069,13 +2122,21 @@ function saveTemporaryDraft() {
       window.location.reload();
     } else {
       // 失敗時: 画面入力を保持し、リロードしない
+      setSubmissionBusy("draft", false);
+      const errMsg = res ? (res.error || res.message) : "Unknown error";
+      console.error("[app.js] Draft save failed:", errMsg);
+      let failMessage = "一時保存に失敗しました。\n通信状態を確認の上、再度お試しください。";
+      if (res && res.error) {
+        failMessage += `\n\nエラーコード: ${res.error}`;
+      }
       showAppModal({
         title: "一時保存エラー",
-        message: "一時保存に失敗しました。通信状態を確認の上、再度お試しください。"
+        message: failMessage
       });
     }
   }).catch(err => {
     // 通信エラー時: 端末非常用バックアップを保存するが、画面入力は保持し、リロードしない
+    setSubmissionBusy("draft", false);
     TerminalStorage.saveLocalDraft(draftData);
     showAppModal({
       title: "一時保存エラー",
@@ -2117,7 +2178,10 @@ function resumeDraftSlip(slipId) {
       updateWeightDisplay();
 
       switchTab("create");
-      showAppModal({ title: "下書き再開", message: "下書きの入力を再開しました。" });
+      showAppModal({
+        title: "下書き再開",
+        message: "下書きの入力を再開しました。\n署名は一時保存されないため、確定前に再度入力してください。"
+      });
     }
   });
 }
@@ -3379,7 +3443,9 @@ if (typeof module !== "undefined" && module.exports) {
     getCurrentResumedDraftId: () => currentResumedDraftId,
     setCurrentResumedDraftId: (id) => { currentResumedDraftId = id; },
     getGasClientInstance: () => gasClient,
-    setGasClientInstance: (c) => { gasClient = c; }
+    setGasClientInstance: (c) => { gasClient = c; },
+    setSubmissionBusy,
+    setFinalizeButtonsDisabled
   };
 }
 
@@ -3398,6 +3464,8 @@ if (typeof window !== "undefined") {
   window.executeDeleteDraft = executeDeleteDraft;
   window.getCurrentResumedDraftId = () => currentResumedDraftId;
   window.setCurrentResumedDraftId = (id) => { currentResumedDraftId = id; };
+  window.setSubmissionBusy = setSubmissionBusy;
+  window.setFinalizeButtonsDisabled = setFinalizeButtonsDisabled;
 }
 
 
