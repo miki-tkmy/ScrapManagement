@@ -56,7 +56,6 @@ class SignaturePad {
 
   startDrawing(e) {
     this.isDrawing = true;
-    this.hasDrawn = true;
     this.lastPoint = this.getPoint(e);
   }
 
@@ -69,6 +68,7 @@ class SignaturePad {
     this.ctx.lineTo(currentPoint.x, currentPoint.y);
     this.ctx.stroke();
 
+    this.hasDrawn = true;
     this.lastPoint = currentPoint;
   }
 
@@ -114,3 +114,4 @@ if (typeof window !== "undefined") {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = { SignaturePad };
 }
+
