@@ -2154,6 +2154,16 @@ function resumeDraftSlip(slipId) {
       currentResumedDraftId = s.slipNo || s.slipId || s.scrapId || slipId;
       currentResumedDraftDate = s.date || null;
 
+      // P10 Fix: 署名状態の完全初期化 (前伝票の確定署名データ残存・リーク防止)
+      confirmedSignatureData = null;
+      pendingFinalizeSlip = null;
+      if (typeof vendorPad !== "undefined" && vendorPad && typeof vendorPad.clear === "function") {
+        vendorPad.clear();
+      }
+      if (typeof updateSignatureDisplay === "function") {
+        updateSignatureDisplay();
+      }
+
       // 1. Working Base の復元 (所属Baseは変更せず、Working Base のみ切り替え)
       if (s.baseCode && s.baseName) {
         updateWorkingBaseState(s.baseCode, s.baseName, true);
