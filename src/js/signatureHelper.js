@@ -18,6 +18,14 @@ function validateVendorSignature(dataUrl) {
   }
 
   const b64Data = dataUrl.replace("data:image/png;base64,", "");
+  // Base64 文字セット検証
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(b64Data)) {
+    return {
+      status: "INVALID",
+      hasSignature: false,
+      message: "Base64エンコードが不正です。"
+    };
+  }
   // 白紙判定 (文字数が極小)
   if (b64Data.length < 500) {
     return {
@@ -53,3 +61,4 @@ if (typeof window !== "undefined") {
     NO_SIGNATURE_CONFIRMATION_MESSAGE
   };
 }
+
