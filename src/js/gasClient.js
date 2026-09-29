@@ -7,7 +7,7 @@
 // - 中央履歴 (fetchHistory), 伝票詳細 (fetchSlip), 中央集計 (fetchSummary), 社員照会 (lookupEmployee)
 // ========================================================================================
 
-const SCRAP_FRONTEND_BUILD_ID = "P10-HARDENING-20260928-01";
+const SCRAP_FRONTEND_BUILD_ID = "SIGNATURE-ACCESS-C-20260928-01";
 if (typeof window !== "undefined") {
   window.SCRAP_FRONTEND_BUILD_ID = SCRAP_FRONTEND_BUILD_ID;
 }

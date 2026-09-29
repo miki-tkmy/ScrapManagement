@@ -40,6 +40,16 @@ let workingBaseName = "";
 let resolvedBaseCode = "";
 let resolvedBaseName = "";
 
+function escapeHtml(str) {
+  if (str === null || str === undefined) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function runBootstrapSequence() {
   if (typeof setDiagnosticStage === "function") {
     setDiagnosticStage("BOOTSTRAP_START");
@@ -2474,12 +2484,12 @@ function renderHistoryRows(tbody, slips) {
     tr.innerHTML = `
       <td class="history-col-mobile">
         <div class="history-row-1 history-row-top">
-          <span class="hist-date">${dateStr}</span>
-          <span class="hist-slip-no">${s.slipNo || s.slipId}</span>
+          <span class="hist-date">${escapeHtml(dateStr)}</span>
+          <span class="hist-slip-no">${escapeHtml(s.slipNo || s.slipId)}</span>
         </div>
         <div class="history-row-2">
-          <span class="hist-base">${s.baseName}</span>
-          <span class="hist-staff">${s.staffName}</span>
+          <span class="hist-base">${escapeHtml(s.baseName)}</span>
+          <span class="hist-staff">${escapeHtml(s.staffName)}</span>
         </div>
         <div class="history-row-3 history-row-bottom">
           <div class="hist-actions">
@@ -2488,11 +2498,11 @@ function renderHistoryRows(tbody, slips) {
           </div>
         </div>
       </td>
-      <td class="hist-desktop-col"><strong>${s.slipNo || s.slipId}</strong></td>
-      <td class="hist-desktop-col">${dateStr}</td>
-      <td class="hist-desktop-col">${s.baseName}</td>
-      <td class="hist-desktop-col">${s.staffName}</td>
-      <td class="hist-desktop-col">${s.vendorName}</td>
+      <td class="hist-desktop-col"><strong>${escapeHtml(s.slipNo || s.slipId)}</strong></td>
+      <td class="hist-desktop-col">${escapeHtml(dateStr)}</td>
+      <td class="hist-desktop-col">${escapeHtml(s.baseName)}</td>
+      <td class="hist-desktop-col">${escapeHtml(s.staffName)}</td>
+      <td class="hist-desktop-col">${escapeHtml(s.vendorName)}</td>
       <td class="hist-desktop-col">${sigBadge}</td>
       <td class="hist-desktop-col"><span class="brand-badge" style="background:var(--color-primary); color:var(--color-button-text); font-size:0.75rem;">完了</span></td>
       <td class="hist-desktop-col">
@@ -2575,7 +2585,7 @@ function printSlipFromRecord(s) {
       tr.innerHTML = `
         <td class="text-center">${lineNo++}</td>
         <td>資材コード品</td>
-        <td>${it.itemName} (${it.itemCode})</td>
+        <td>${escapeHtml(it.itemName)} (${escapeHtml(it.itemCode)})</td>
         <td class="text-right">${getPrintQuantityDisplay(it)}</td>
       `;
       tbody.appendChild(tr);
@@ -2586,7 +2596,7 @@ function printSlipFromRecord(s) {
       tr.innerHTML = `
         <td class="text-center">${lineNo++}</td>
         <td>定型品</td>
-        <td>${fi.itemName}</td>
+        <td>${escapeHtml(fi.itemName)}</td>
         <td class="text-right">${getPrintQuantityDisplay(fi)}</td>
       `;
       tbody.appendChild(tr);
@@ -2597,22 +2607,34 @@ function printSlipFromRecord(s) {
       tr.innerHTML = `
         <td class="text-center">${lineNo++}</td>
         <td>その他品</td>
-        <td>${oi.itemName}</td>
-        <td class="text-right">${oi.quantityInput || ""}</td>
+        <td>${escapeHtml(oi.itemName)}</td>
+        <td class="text-right">${escapeHtml(oi.quantityInput || "")}</td>
       `;
       tbody.appendChild(tr);
     });
   }
 
-  // 署名欄: DIGITAL なら画像表示、NONE なら空白 (受領印・手書き署名等の文言は一切表示しない)
+  // 署名欄: Architecture Decision C (C_ANONYMOUS_API_NO_SIGNATURE_BINARY)
+  // 履歴詳細・印刷時に画像 Base64 は img.src にセットせず、テキストで安全に明示する。
   const sigImg = document.getElementById("print-vendor-signature-img");
+  const sigArea = document.getElementById("print-signature-area");
   if (sigImg) {
-    if (s.signatureStatus === "DIGITAL" && (s.vendorSignatureImage || s.signatureData)) {
-      sigImg.src = s.vendorSignatureImage || s.signatureData;
-      sigImg.style.display = "block";
+    sigImg.src = "";
+    sigImg.style.display = "none";
+  }
+  if (sigArea) {
+    let textEl = document.getElementById("print-vendor-signature-status-text");
+    if (!textEl) {
+      textEl = document.createElement("div");
+      textEl.id = "print-vendor-signature-status-text";
+      sigArea.appendChild(textEl);
+    }
+    if (s.signatureStatus === "DIGITAL") {
+      textEl.innerHTML = '<span style="font-weight:bold; font-size:10pt; color:#111;">【電子署名済み】</span><br><span style="font-size:7pt; color:#666;">（署名画像は履歴画面では表示されません）</span>';
+      textEl.style.display = "block";
     } else {
-      sigImg.src = "";
-      sigImg.style.display = "none";
+      textEl.innerHTML = '<span style="font-size:9pt; color:#888;">【署名なし】</span>';
+      textEl.style.display = "block";
     }
   }
 
