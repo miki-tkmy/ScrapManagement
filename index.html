@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>ScrapManagement - スクラップ処分記録</title>
-  <link rel="stylesheet" href="src/css/style.css?v=p11_history_search_20260929_01">
+  <link rel="stylesheet" href="src/css/style.css?v=p11_history_search_ui_fix_20260929_01">
   <link rel="stylesheet" href="src/css/print.css" media="print">
 </head>
 <body>
@@ -444,7 +444,7 @@
         <!-- Frontend Build ID 常時表示 -->
         <div class="settings-section" style="border-top:1px solid var(--color-border); padding-top:1rem; margin-top:1rem; text-align:center;">
           <div id="frontend-build-id-display" style="font-size:0.75rem; color:var(--color-text-muted); font-family:monospace;">
-            Build: P11-HISTORY-SEARCH-20260929-01
+            Build: P11-HISTORY-SEARCH-UI-FIX-20260929-01
           </div>
         </div>
       </div>
@@ -534,9 +534,9 @@
   <!-- P11: 確定伝票詳細確認モーダル (Read-Only) -->
   <div id="history-detail-modal" class="modal-overlay" style="display:none;" onclick="handleHistoryDetailBackdropClick(event)">
     <div class="modal-content history-detail-modal-content" onclick="event.stopPropagation()">
-      <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--color-border); padding-bottom:0.75rem; margin-bottom:0.75rem;">
-        <h3 class="modal-title" id="hist-detail-modal-title" style="margin:0; font-size:1.1rem; font-weight:700;">伝票詳細</h3>
-        <button type="button" id="btn-close-hist-detail-x" class="btn btn-secondary" style="padding:4px 10px; min-height:32px; font-size:1rem; border-radius:4px;" onclick="closeHistoryDetailModal()">✕</button>
+      <div class="history-detail-modal-header">
+        <h3 class="modal-title" id="hist-detail-modal-title">伝票詳細</h3>
+        <button type="button" id="btn-close-hist-detail-x" class="btn btn-secondary history-detail-close-btn" onclick="closeHistoryDetailModal()" aria-label="閉じる">✕</button>
       </div>
       
       <!-- ローディング表示 -->
@@ -546,47 +546,13 @@
       </div>
 
       <!-- 詳細本体 -->
-      <div id="history-detail-modal-body" class="history-detail-body" style="display:none; max-height:70vh; overflow-y:auto; padding-right:4px;">
-        <!-- ヘッダーグリッド -->
-        <div class="detail-info-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:0.6rem; margin-bottom:1rem; background:var(--color-surface-subtle); padding:0.75rem; border-radius:var(--radius-sm); border:1px solid var(--color-border); font-size:0.85rem;">
-          <div><span style="color:var(--color-text-muted); font-size:0.78rem;">伝票番号</span><div id="hist-detail-slip-no" style="font-weight:700; font-family:monospace;">--</div></div>
-          <div><span style="color:var(--color-text-muted); font-size:0.78rem;">処分日</span><div id="hist-detail-date" style="font-weight:700;">--</div></div>
-          <div><span style="color:var(--color-text-muted); font-size:0.78rem;">拠点</span><div id="hist-detail-base">--</div></div>
-          <div><span style="color:var(--color-text-muted); font-size:0.78rem;">担当者</span><div id="hist-detail-staff">--</div></div>
-          <div><span style="color:var(--color-text-muted); font-size:0.78rem;">引取業者</span><div id="hist-detail-vendor" style="font-weight:600;">--</div></div>
-          <div><span style="color:var(--color-text-muted); font-size:0.78rem;">署名状態</span><div id="hist-detail-signature">--</div></div>
-          <div><span style="color:var(--color-text-muted); font-size:0.78rem;">確定日時</span><div id="hist-detail-finalized-at" style="font-size:0.8rem; color:var(--color-text-muted);">--</div></div>
-        </div>
-
-        <!-- 明細セクション -->
-        <div style="margin-bottom:0.75rem;">
-          <h4 style="font-size:0.9rem; font-weight:700; margin-bottom:0.4rem; color:var(--color-headline);">処分品目明細</h4>
-          <div class="materials-table-wrapper">
-            <table class="materials-table" style="font-size:0.85rem;">
-              <thead>
-                <tr>
-                  <th style="width:10%; text-align:center;">No.</th>
-                  <th style="width:20%;">区分</th>
-                  <th style="width:45%;">品名 / 規格</th>
-                  <th style="width:25%; text-align:right;">数量</th>
-                </tr>
-              </thead>
-              <tbody id="hist-detail-items-tbody">
-                <!-- 動的生成 -->
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <!-- 署名状況テキスト明示 (Decision C: 画像非表示) -->
-        <div id="hist-detail-sig-notice" style="margin-top:0.75rem; padding:0.6rem; background:var(--color-surface-subtle); border-radius:var(--radius-sm); font-size:0.8rem; color:var(--color-text-muted);">
-          <!-- 署名状態テキスト -->
-        </div>
+      <div id="history-detail-modal-body" class="history-detail-body" style="display:none;">
+        <!-- 動的生成 (renderHistoryDetailContent) -->
       </div>
 
-      <!-- フッターアクション -->
-      <div class="modal-actions" style="margin-top:0.75rem; display:flex; justify-content:space-between; align-items:center;">
-        <button type="button" class="btn btn-secondary" id="btn-hist-detail-print" onclick="handleHistoryDetailPrint()">印刷</button>
+      <!-- フッターアクション (ボタン2つに統一・端への密着解消) -->
+      <div class="history-detail-actions">
+        <button type="button" class="btn btn-secondary" id="btn-hist-detail-print" onclick="handleHistoryDetailPrint()">この伝票を印刷</button>
         <button type="button" class="btn btn-primary" id="btn-hist-detail-close" onclick="closeHistoryDetailModal()">閉じる</button>
       </div>
     </div>
@@ -660,18 +626,18 @@
   </div>
 
   <!-- スクリプト読み込み (依存順) -->
-  <script src="src/js/config.js?v=p11_history_search_20260929_01"></script>
-  <script src="src/js/fixtures.js?v=p11_history_search_20260929_01"></script>
-  <script src="src/js/baseService.js?v=p11_history_search_20260929_01"></script>
-  <script src="src/js/itemService.js?v=p11_history_search_20260929_01"></script>
-  <script src="src/js/quantityEngine.js?v=p11_history_search_20260929_01"></script>
-  <script src="src/js/weightEngine.js?v=p11_history_search_20260929_01"></script>
-  <script src="src/js/signatureHelper.js?v=p11_history_search_20260929_01"></script>
-  <script src="src/js/signature.js?v=p11_history_search_20260929_01"></script>
-  <script src="src/js/gasClient-gate3a7-fixpref-20260927.js?v=p11_history_search_20260929_01"></script>
-  <script src="src/js/storage.js?v=p11_history_search_20260929_01"></script>
-  <script src="src/js/validator.js?v=p11_history_search_20260929_01"></script>
-  <script src="src/js/app.js?v=p11_history_search_20260929_01"></script>
+  <script src="src/js/config.js?v=p11_history_search_ui_fix_20260929_01"></script>
+  <script src="src/js/fixtures.js?v=p11_history_search_ui_fix_20260929_01"></script>
+  <script src="src/js/baseService.js?v=p11_history_search_ui_fix_20260929_01"></script>
+  <script src="src/js/itemService.js?v=p11_history_search_ui_fix_20260929_01"></script>
+  <script src="src/js/quantityEngine.js?v=p11_history_search_ui_fix_20260929_01"></script>
+  <script src="src/js/weightEngine.js?v=p11_history_search_ui_fix_20260929_01"></script>
+  <script src="src/js/signatureHelper.js?v=p11_history_search_ui_fix_20260929_01"></script>
+  <script src="src/js/signature.js?v=p11_history_search_ui_fix_20260929_01"></script>
+  <script src="src/js/gasClient-gate3a7-fixpref-20260927.js?v=p11_history_search_ui_fix_20260929_01"></script>
+  <script src="src/js/storage.js?v=p11_history_search_ui_fix_20260929_01"></script>
+  <script src="src/js/validator.js?v=p11_history_search_ui_fix_20260929_01"></script>
+  <script src="src/js/app.js?v=p11_history_search_ui_fix_20260929_01"></script>
 </body>
 </html>
 
