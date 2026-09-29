@@ -14,6 +14,9 @@
    ======================================================================================== */
 
 :root {
+  /* Runtime Asset Identity (Section E) */
+  --scrap-style-runtime-rev: "P11-HISTORY-SEARCH-UI-FIX-R2-20260929-01";
+
   /* 正式カラー変数 */
   --color-background: #FFFFFF;
   --color-headline: #1F1235;
@@ -1375,6 +1378,21 @@ body.modal-open {
   border-radius: var(--radius-sm) !important;
   font-weight: 700 !important;
   line-height: 1.2 !important;
+  box-sizing: border-box !important;
+}
+
+/* 電子署名済み (緑塗りつぶし・白文字 - Section L) */
+.hist-sig-badge.badge-digital {
+  background: var(--color-success) !important;
+  color: #FFFFFF !important;
+  border: 1px solid var(--color-success) !important;
+}
+
+/* 署名なし (透明背景・緑文字・緑破線border・非警告表現 - Section M) */
+.hist-sig-badge.badge-none {
+  background: transparent !important;
+  color: var(--color-success) !important;
+  border: 2px dashed var(--color-success) !important;
 }
 
 /* 履歴画面 横スクロール完全禁止 */

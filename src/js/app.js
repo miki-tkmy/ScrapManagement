@@ -1,5 +1,11 @@
 // アプリケーション統合コントローラー (app.js)
 // ========================================================================================
+// Runtime Asset Identity (Section E)
+const SCRAP_APP_RUNTIME_REV = "P11-HISTORY-SEARCH-UI-FIX-R2-20260929-01";
+if (typeof window !== "undefined") {
+  window.SCRAP_APP_RUNTIME_REV = SCRAP_APP_RUNTIME_REV;
+}
+
 // ScrapManagement Cross-Cutting Remediation
 // - 履歴・集計の Source of Truth: Central DB (Google Sheets / GAS)
 // - 社員番号設定 (CompanyBaseDB Projection) & 拠点/担当者ロック
@@ -1007,13 +1013,53 @@ function verifyAndSaveEmployee() {
   });
 }
 
-// Gate 3-A.5: 診断パネル初期化 & DOM更新ヘルパー
+// Gate 3-A.5 & P11-R2: 診断パネル初期化 & DOM更新ヘルパー
+function checkRuntimeAssetIdentity() {
+  const htmlBuild = (typeof document !== "undefined" && document.getElementById("diag-html-build")?.textContent?.trim()) || "";
+  const appRuntime = typeof SCRAP_APP_RUNTIME_REV !== "undefined" ? SCRAP_APP_RUNTIME_REV : "";
+  let styleRuntime = "";
+  if (typeof window !== "undefined" && typeof document !== "undefined") {
+    try {
+      const rootStyle = getComputedStyle(document.documentElement);
+      styleRuntime = (rootStyle.getPropertyValue("--scrap-style-runtime-rev") || "").trim().replace(/^["']|["']$/g, "");
+    } catch (e) {}
+  }
+  const isMatch = Boolean(htmlBuild && appRuntime && styleRuntime && htmlBuild === appRuntime && appRuntime === styleRuntime);
+  return {
+    htmlBuild,
+    appRuntime,
+    styleRuntime,
+    isMatch,
+    statusText: isMatch ? "OK (ALL MATCH)" : "RUNTIME_ASSET_MISMATCH"
+  };
+}
+
 function initDiagnostic() {
   const urlParams = (typeof window !== "undefined" && window.location) ? new URLSearchParams(window.location.search) : null;
   const isDiag = urlParams && urlParams.get("diag") === "1";
   const diagPanel = document.getElementById("diagnostic-panel");
   if (diagPanel && isDiag) {
     diagPanel.style.display = "block";
+  }
+
+  // Runtime Asset Identity (Section E)
+  const identity = checkRuntimeAssetIdentity();
+  const diagHtmlBuild = document.getElementById("diag-html-build");
+  if (diagHtmlBuild && !diagHtmlBuild.textContent.trim()) {
+    diagHtmlBuild.textContent = "P11-HISTORY-SEARCH-UI-FIX-R2-20260929-01";
+  }
+  const diagAppRuntime = document.getElementById("diag-app-runtime");
+  if (diagAppRuntime) {
+    diagAppRuntime.textContent = identity.appRuntime || "--";
+  }
+  const diagStyleRuntime = document.getElementById("diag-style-runtime");
+  if (diagStyleRuntime) {
+    diagStyleRuntime.textContent = identity.styleRuntime || "--";
+  }
+  const diagAssetStatus = document.getElementById("diag-asset-status");
+  if (diagAssetStatus) {
+    diagAssetStatus.textContent = identity.statusText;
+    diagAssetStatus.style.color = identity.isMatch ? "var(--color-success)" : "var(--color-danger)";
   }
 
   const diagBuildId = document.getElementById("diag-build-id");
@@ -2283,48 +2329,129 @@ function executeDeleteDraft(draftId) {
   });
 }
 
-// 日付・日時フォーマットヘルパー (JST Asia/Tokyo 正規化 & 二重+9h防止)
-function toCanonicalBusinessDate(input) {
-  if (!input) return "";
-  if (typeof input === "string") {
-    const s = input.trim();
-    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-    if (/^\d{4}\/\d{2}\/\d{2}$/.test(s)) return s.replace(/\//g, "-");
-  }
+// ============================================================
+// 日付・日時フォーマットヘルパー (Safari / WebKit 対応 決定論的パーサー)
+// ============================================================
+const SCRAP_MONTH_MAP = {
+  Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
+  Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12"
+};
 
-  let d = null;
+function parseDateDetails(input) {
+  if (input === null || input === undefined) return null;
+
   if (input instanceof Date) {
-    d = input;
-  } else if (typeof input === "string" || typeof input === "number") {
-    const parsed = Date.parse(input);
+    if (isNaN(input.getTime())) return null;
+    try {
+      const formatter = new Intl.DateTimeFormat("ja-JP", {
+        timeZone: "Asia/Tokyo",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false
+      });
+      const parts = formatter.formatToParts(input);
+      let year = "", month = "", day = "", hour = "00", minute = "00";
+      for (const p of parts) {
+        if (p.type === "year") year = p.value;
+        if (p.type === "month") month = p.value.padStart(2, "0");
+        if (p.type === "day") day = p.value.padStart(2, "0");
+        if (p.type === "hour") hour = p.value.padStart(2, "0");
+        if (p.type === "minute") minute = p.value.padStart(2, "0");
+      }
+      return { year, month, day, hour, minute };
+    } catch (e) {
+      const jst = new Date(input.getTime() + 9 * 60 * 60 * 1000);
+      const year = String(jst.getUTCFullYear());
+      const month = String(jst.getUTCMonth() + 1).padStart(2, "0");
+      const day = String(jst.getUTCDate()).padStart(2, "0");
+      const hour = String(jst.getUTCHours()).padStart(2, "0");
+      const minute = String(jst.getUTCMinutes()).padStart(2, "0");
+      return { year, month, day, hour, minute };
+    }
+  }
+
+  if (typeof input === "number") {
+    return parseDateDetails(new Date(input));
+  }
+
+  if (typeof input !== "string") return null;
+  const s = input.trim();
+  if (!s) return null;
+
+  // 括弧付きタイムゾーン（例: "(日本標準時)", "(JST)"）を除去
+  const cleanStr = s.replace(/\s*\([^)]*\)/g, "").trim();
+
+  // Pattern A: YYYY-MM-DD または YYYY/MM/DD
+  const mDateOnly = cleanStr.match(/^(\d{4})[-/](\d{2})[-/](\d{2})$/);
+  if (mDateOnly) {
+    return {
+      year: mDateOnly[1],
+      month: mDateOnly[2],
+      day: mDateOnly[3],
+      hour: "00",
+      minute: "00"
+    };
+  }
+
+  // Pattern B: 英語曜日/月名 + YYYY + 時刻 (Date.toString() 形式)
+  // 例: "Sun Sep 27 2026 00:00:00 GMT+0900"
+  const mEng = cleanStr.match(/(?:[A-Za-z]{3},?\s+)?([A-Za-z]{3})\s+(\d{1,2})\s+(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
+  if (mEng && SCRAP_MONTH_MAP[mEng[1]]) {
+    const month = SCRAP_MONTH_MAP[mEng[1]];
+    const day = mEng[2].padStart(2, "0");
+    const year = mEng[3];
+    const hour = mEng[4] ? mEng[4].padStart(2, "0") : "00";
+    const minute = mEng[5] ? mEng[5].padStart(2, "0") : "00";
+    return { year, month, day, hour, minute };
+  }
+
+  // Pattern C: ISO / UTC タイムスタンプ ("T", "Z", またはタイムゾーンオフセットあり)
+  if (/T|Z|[+-]\d{2}:?\d{2}/.test(cleanStr)) {
+    const parsed = Date.parse(cleanStr);
     if (!isNaN(parsed)) {
-      d = new Date(parsed);
+      return parseDateDetails(new Date(parsed));
     }
   }
 
-  if (!d || isNaN(d.getTime())) {
-    if (typeof input === "string") {
-      const m = input.match(/(\d{4})[-/](\d{2})[-/](\d{2})/);
-      if (m) return `${m[1]}-${m[2]}-${m[3]}`;
-    }
-    return "";
+  // Pattern D: "YYYY-MM-DD HH:mm" または "YYYY/MM/DD HH:mm"
+  const mDateTime = cleanStr.match(/^(\d{4})[-/](\d{2})[-/](\d{2})[\sT](\d{2}):(\d{2})/);
+  if (mDateTime) {
+    return {
+      year: mDateTime[1],
+      month: mDateTime[2],
+      day: mDateTime[3],
+      hour: mDateTime[4].padStart(2, "0"),
+      minute: mDateTime[5].padStart(2, "0")
+    };
   }
 
-  try {
-    const formatter = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Asia/Tokyo",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit"
-    });
-    return formatter.format(d);
-  } catch (e) {
-    const jst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
-    const y = jst.getUTCFullYear();
-    const m = String(jst.getUTCMonth() + 1).padStart(2, "0");
-    const day = String(jst.getUTCDate()).padStart(2, "0");
-    return `${y}-${m}-${day}`;
+  // Pattern E: Date.parse フォールバック
+  const generalParsed = Date.parse(cleanStr);
+  if (!isNaN(generalParsed)) {
+    return parseDateDetails(new Date(generalParsed));
   }
+
+  // Pattern F: 部分一致 YYYY-MM-DD
+  const fallbackYmd = cleanStr.match(/(\d{4})[-/](\d{2})[-/](\d{2})/);
+  if (fallbackYmd) {
+    return {
+      year: fallbackYmd[1],
+      month: fallbackYmd[2],
+      day: fallbackYmd[3],
+      hour: "00",
+      minute: "00"
+    };
+  }
+
+  return null;
+}
+
+function toCanonicalBusinessDate(input) {
+  const parts = parseDateDetails(input);
+  return parts ? `${parts.year}-${parts.month}-${parts.day}` : "";
 }
 
 function formatJstDate(dateVal) {
@@ -2334,64 +2461,9 @@ function formatJstDate(dateVal) {
 }
 
 function formatJstDateTime(dateVal) {
-  if (!dateVal) return "--";
-  let d = null;
-  if (dateVal instanceof Date) {
-    d = dateVal;
-  } else if (typeof dateVal === "string") {
-    const s = dateVal.trim();
-    if (!s) return "--";
-    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
-      return s.replace(/-/g, "/") + " 00:00";
-    }
-    if (/^\d{4}\/\d{2}\/\d{2}$/.test(s)) {
-      return s + " 00:00";
-    }
-    const parsed = Date.parse(s);
-    if (!isNaN(parsed)) {
-      d = new Date(parsed);
-    }
-  } else if (typeof dateVal === "number") {
-    d = new Date(dateVal);
-  }
-
-  if (!d || isNaN(d.getTime())) {
-    const canonical = toCanonicalBusinessDate(dateVal);
-    if (canonical) return canonical.replace(/-/g, "/") + " 00:00";
-    return String(dateVal);
-  }
-
-  try {
-    const formatter = new Intl.DateTimeFormat("ja-JP", {
-      timeZone: "Asia/Tokyo",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false
-    });
-    const parts = formatter.formatToParts(d);
-    let year = "", month = "", day = "", hour = "", minute = "";
-    for (const p of parts) {
-      if (p.type === "year") year = p.value;
-      if (p.type === "month") month = p.value.padStart(2, "0");
-      if (p.type === "day") day = p.value.padStart(2, "0");
-      if (p.type === "hour") hour = p.value.padStart(2, "0");
-      if (p.type === "minute") minute = p.value.padStart(2, "0");
-    }
-    if (year && month && day) {
-      return `${year}/${month}/${day} ${hour || "00"}:${minute || "00"}`;
-    }
-  } catch (e) {}
-
-  const jst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
-  const y = jst.getUTCFullYear();
-  const m = String(jst.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(jst.getUTCDate()).padStart(2, "0");
-  const h = String(jst.getUTCHours()).padStart(2, "0");
-  const min = String(jst.getUTCMinutes()).padStart(2, "0");
-  return `${y}/${m}/${day} ${h}:${min}`;
+  const parts = parseDateDetails(dateVal);
+  if (!parts) return "--";
+  return `${parts.year}/${parts.month}/${parts.day} ${parts.hour}:${parts.minute}`;
 }
 
 function sortDrafts(drafts) {
@@ -2750,8 +2822,8 @@ function renderHistoryRows(tbody, slips) {
     const baseName = s.baseName || resolvedBaseName || "";
     const staffName = s.staffName || "-";
     const sigBadge = s.signatureStatus === "DIGITAL"
-      ? `<span class="hist-sig-badge brand-badge" style="background:var(--color-success); color:#fff; font-size:0.75rem;">電子署名済み</span>`
-      : `<span class="hist-sig-badge brand-badge" style="background:var(--color-tertiary); color:var(--color-headline); font-size:0.75rem;">署名なし</span>`;
+      ? `<span class="hist-sig-badge badge-digital">電子署名済み</span>`
+      : `<span class="hist-sig-badge badge-none">署名なし</span>`;
 
     const tr = document.createElement("tr");
     tr.innerHTML = `
@@ -2858,10 +2930,10 @@ function renderHistoryDetailContent(slip) {
   const dateStr = formatJstDateTime(slip.date || slip.createdAt);
   const finStr = formatJstDateTime(slip.finalizedAt || slip.createdAt);
 
-  // 署名表示: Decision C 厳格遵守 (バイナリ/Base64/FileId 非表示、テキストバッジのみ、改行禁止)
+  // 署名表示: Decision C 厳格遵守 (バイナリ/Base64/FileId 非表示、テキストバッジのみ、改行禁止 - Section L, M, N)
   const sigText = slip.signatureStatus === "DIGITAL"
-    ? `<span class="hist-sig-badge brand-badge" style="background:var(--color-success); color:#fff; font-size:0.85rem;">電子署名済み</span>`
-    : `<span class="hist-sig-badge brand-badge" style="background:var(--color-tertiary); color:var(--color-headline); font-size:0.85rem;">署名なし</span>`;
+    ? `<span class="hist-sig-badge badge-digital">電子署名済み</span>`
+    : `<span class="hist-sig-badge badge-none">署名なし</span>`;
 
   // 明細行生成 (CODE品、定型品、その他)
   let itemsHtml = "";
@@ -3983,11 +4055,17 @@ if (typeof module !== "undefined" && module.exports) {
     printSlipFromHistory,
     getHistorySearchState: () => historySearchState,
     getFilteredHistorySlips: () => filteredHistorySlips,
-    getHistoryDetailCache: () => historyDetailCache
+    getHistoryDetailCache: () => historyDetailCache,
+    SCRAP_APP_RUNTIME_REV,
+    parseDateDetails,
+    checkRuntimeAssetIdentity
   };
 }
 
 if (typeof window !== "undefined") {
+  window.SCRAP_APP_RUNTIME_REV = SCRAP_APP_RUNTIME_REV;
+  window.parseDateDetails = parseDateDetails;
+  window.checkRuntimeAssetIdentity = checkRuntimeAssetIdentity;
   window.getPrintQuantityDisplay = getPrintQuantityDisplay;
   window.checkIfSlipAffectsSummary = checkIfSlipAffectsSummary;
   window.initializeGasClientInstance = initializeGasClientInstance;
