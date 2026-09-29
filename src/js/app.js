@@ -28,6 +28,17 @@ let currentSummaryData = null;
 let currentResumedDraftId = null;
 let currentResumedDraftDate = null;
 
+// P11 履歴検索・詳細表示用ステート
+let historySearchState = {
+  fromDate: "",
+  toDate: "",
+  keyword: "",
+  signatureStatus: "ALL",
+  visibleCount: 50
+};
+let filteredHistorySlips = [];
+const historyDetailCache = new Map();
+
 // 社員設定 (所属Base vs 入力Base 分離)
 let resolvedEmployeeNo = "";
 let resolvedEmployeeName = "";
@@ -591,6 +602,18 @@ function updateWorkingBaseState(baseCode, baseName, persistSession = true) {
   workingBaseName = baseName ? String(baseName).trim() : "";
   resolvedBaseCode = workingBaseCode;
   resolvedBaseName = workingBaseName;
+
+  // P11: Working Base 切替時は履歴検索ステートと詳細キャッシュをリセット
+  historySearchState = {
+    fromDate: "",
+    toDate: "",
+    keyword: "",
+    signatureStatus: "ALL",
+    visibleCount: 50
+  };
+  if (typeof historyDetailCache !== "undefined" && historyDetailCache && historyDetailCache.clear) {
+    historyDetailCache.clear();
+  }
 
   if (persistSession && resolvedEmployeeNo) {
     TerminalStorage.setSessionWorkingBase(workingBaseCode, workingBaseName, resolvedEmployeeNo);
@@ -2466,16 +2489,182 @@ function fetchAndRenderHistory(tbody, baseCode, revision) {
   });
 }
 
+// ============================================================
+// P11 履歴検索・フィルター・ソート・詳細モーダル コアロジック
+// ============================================================
+
+// E. 業務日付取得ヘルパー (slip.date 優先、欠損時 createdAt の日付部分)
+function getHistoryBusinessDate(slip) {
+  if (!slip) return "";
+  if (slip.date && typeof slip.date === "string" && slip.date.trim() !== "") {
+    return slip.date.trim();
+  }
+  if (slip.createdAt && typeof slip.createdAt === "string") {
+    return slip.createdAt.slice(0, 10);
+  }
+  return "";
+}
+
+// I. 検索キーワード正規化 (String, trim, Unicode NFKC, lowercase)
+function normalizeHistorySearchText(value) {
+  return String(value || "").trim().normalize("NFKC").toLowerCase();
+}
+
+// F. FINAL履歴の決定論的sort
+// 第1キー: Business Date DESC, 第2キー: FinalizedAt DESC, 第3キー: SlipNo DESC
+function sortFinalHistorySlips(slips) {
+  if (!Array.isArray(slips)) return [];
+  return slips.slice().sort((a, b) => {
+    const dateA = getHistoryBusinessDate(a);
+    const dateB = getHistoryBusinessDate(b);
+    if (dateA !== dateB) {
+      return dateB.localeCompare(dateA);
+    }
+    const finA = a.finalizedAt || a.createdAt || "";
+    const finB = b.finalizedAt || b.createdAt || "";
+    if (finA !== finB) {
+      return finB.localeCompare(finA);
+    }
+    const slipNoA = a.slipNo || a.slipId || "";
+    const slipNoB = b.slipNo || b.slipId || "";
+    return slipNoB.localeCompare(slipNoA);
+  });
+}
+
+// J. 履歴フィルター契約 (FINAL限定、期間From/To、キーワード、署名状態)
+function applyHistoryFilters(slips, searchState = {}) {
+  if (!Array.isArray(slips)) return [];
+  const fromDate = searchState.fromDate ? searchState.fromDate.trim() : "";
+  const toDate = searchState.toDate ? searchState.toDate.trim() : "";
+  const keyword = normalizeHistorySearchText(searchState.keyword);
+  const sigFilter = searchState.signatureStatus || "ALL";
+
+  const filtered = slips.filter(s => {
+    if (s.status !== "FINAL") return false;
+
+    const bDate = getHistoryBusinessDate(s);
+    if (fromDate && bDate < fromDate) return false;
+    if (toDate && bDate > toDate) return false;
+
+    if (sigFilter === "DIGITAL" && s.signatureStatus !== "DIGITAL") return false;
+    if (sigFilter === "NONE" && s.signatureStatus === "DIGITAL") return false;
+
+    if (keyword) {
+      const slipNo = normalizeHistorySearchText(s.slipNo || s.slipId);
+      const staff = normalizeHistorySearchText(s.staffName);
+      const empNo = normalizeHistorySearchText(s.employeeNo);
+      const vendor = normalizeHistorySearchText(s.vendorName);
+      const match = slipNo.includes(keyword) || staff.includes(keyword) || empNo.includes(keyword) || vendor.includes(keyword);
+      if (!match) return false;
+    }
+    return true;
+  });
+
+  return sortFinalHistorySlips(filtered);
+}
+
+// K. 検索実行ハンドラ (Frontendのみで完結、GAS通信なし)
+function handleHistorySearch(e) {
+  if (e && e.preventDefault) e.preventDefault();
+  const fromEl = document.getElementById("history-search-from");
+  const toEl = document.getElementById("history-search-to");
+  const kwEl = document.getElementById("history-search-keyword");
+  const sigEl = document.getElementById("history-search-signature");
+
+  historySearchState.fromDate = fromEl ? fromEl.value.trim() : "";
+  historySearchState.toDate = toEl ? toEl.value.trim() : "";
+  historySearchState.keyword = kwEl ? kwEl.value.trim() : "";
+  historySearchState.signatureStatus = sigEl ? sigEl.value : "ALL";
+  historySearchState.visibleCount = 50; // 検索条件変更時は50件にリセット
+
+  const tbody = document.getElementById("history-table-tbody");
+  if (tbody) {
+    renderHistoryRows(tbody, centralHistorySlips);
+  }
+}
+
+// L. 検索クリアハンドラ
+function handleHistorySearchClear() {
+  const fromEl = document.getElementById("history-search-from");
+  const toEl = document.getElementById("history-search-to");
+  const kwEl = document.getElementById("history-search-keyword");
+  const sigEl = document.getElementById("history-search-signature");
+
+  if (fromEl) fromEl.value = "";
+  if (toEl) toEl.value = "";
+  if (kwEl) kwEl.value = "";
+  if (sigEl) sigEl.value = "ALL";
+
+  historySearchState = {
+    fromDate: "",
+    toDate: "",
+    keyword: "",
+    signatureStatus: "ALL",
+    visibleCount: 50
+  };
+
+  const tbody = document.getElementById("history-table-tbody");
+  if (tbody) {
+    renderHistoryRows(tbody, centralHistorySlips);
+  }
+}
+
+// N. 表示件数拡張ハンドラ (さらに50件表示)
+function handleHistoryLoadMore() {
+  historySearchState.visibleCount += 50;
+  const tbody = document.getElementById("history-table-tbody");
+  if (tbody) {
+    renderHistoryRows(tbody, centralHistorySlips);
+  }
+}
+
+// 履歴テーブル描画 (50件表示制御・件数表示・モバイル業者名・詳細ボタン対応)
 function renderHistoryRows(tbody, slips) {
+  if (!tbody) return;
   tbody.innerHTML = "";
 
-  if (!slips || slips.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--color-text-muted); padding:1.5rem;">確定された処分伝票はありません (拠点: ${resolvedBaseName})。</td></tr>`;
+  if (slips && Array.isArray(slips)) {
+    centralHistorySlips = slips;
+  }
+
+  // 1. フィルター & 決定論的ソート適用
+  filteredHistorySlips = applyHistoryFilters(centralHistorySlips, historySearchState);
+
+  // 2. 件数表示更新 (該当 X 件 / 全 Y 件)
+  const totalFinalSlips = centralHistorySlips.filter(s => s.status === "FINAL").length;
+  const countTextEl = document.getElementById("history-search-count-text");
+  if (countTextEl) {
+    countTextEl.textContent = `該当 ${filteredHistorySlips.length}件 / 全 ${totalFinalSlips}件`;
+  }
+
+  // 3. 0件表示
+  if (filteredHistorySlips.length === 0) {
+    const isSearchFiltered = (historySearchState.fromDate || historySearchState.toDate || historySearchState.keyword || historySearchState.signatureStatus !== "ALL");
+    if (totalFinalSlips === 0 || !isSearchFiltered) {
+      tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--color-text-muted); padding:1.5rem;">確定された処分伝票はありません (拠点: ${escapeHtml(resolvedBaseName || workingBaseName)})。</td></tr>`;
+    } else {
+      tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--color-text-muted); padding:1.5rem;">
+        検索条件に一致する伝票はありません。<br>
+        <button type="button" class="btn btn-secondary btn-sm" style="margin-top:0.6rem; min-height:36px;" onclick="handleHistorySearchClear()">条件をクリア</button>
+      </td></tr>`;
+    }
+
+    const loadMoreContainer = document.getElementById("history-load-more-container");
+    if (loadMoreContainer) loadMoreContainer.style.display = "none";
     return;
   }
 
-  slips.forEach((s, idx) => {
-    const dateStr = s.createdAt ? s.createdAt.slice(0, 10) : (s.date || "--");
+  // 4. 50件単位の表示制御
+  const visibleSlips = filteredHistorySlips.slice(0, historySearchState.visibleCount);
+  const loadMoreContainer = document.getElementById("history-load-more-container");
+  if (loadMoreContainer) {
+    loadMoreContainer.style.display = filteredHistorySlips.length > historySearchState.visibleCount ? "block" : "none";
+  }
+
+  // 5. 行の描画
+  visibleSlips.forEach((s) => {
+    const dateStr = getHistoryBusinessDate(s) || "--";
+    const slipNo = s.slipNo || s.slipId || "";
     const sigBadge = s.signatureStatus === "DIGITAL"
       ? `<span class="brand-badge" style="background:var(--color-success); font-size:0.75rem;">電子署名済</span>`
       : `<span class="brand-badge" style="background:var(--color-tertiary); color:var(--color-headline); font-size:0.75rem;">署名なし</span>`;
@@ -2485,43 +2674,229 @@ function renderHistoryRows(tbody, slips) {
       <td class="history-col-mobile">
         <div class="history-row-1 history-row-top">
           <span class="hist-date">${escapeHtml(dateStr)}</span>
-          <span class="hist-slip-no">${escapeHtml(s.slipNo || s.slipId)}</span>
+          <span class="hist-slip-no">${escapeHtml(slipNo)}</span>
         </div>
         <div class="history-row-2">
-          <span class="hist-base">${escapeHtml(s.baseName)}</span>
           <span class="hist-staff">${escapeHtml(s.staffName)}</span>
+          <span class="hist-vendor">${escapeHtml(s.vendorName || "-")}</span>
         </div>
         <div class="history-row-3 history-row-bottom">
           <div class="hist-actions">
             ${sigBadge}
-            <button type="button" class="btn btn-secondary btn-sm" onclick="printSlipFromHistory(${idx})">印刷</button>
+            <button type="button" class="btn btn-secondary btn-sm" style="min-height:38px; padding:0.25rem 0.6rem;" onclick="openHistoryDetailModal('${escapeHtml(slipNo)}')">詳細</button>
+            <button type="button" class="btn btn-secondary btn-sm" style="min-height:38px; padding:0.25rem 0.6rem;" onclick="printSlipFromHistory('${escapeHtml(slipNo)}')">印刷</button>
           </div>
         </div>
       </td>
-      <td class="hist-desktop-col"><strong>${escapeHtml(s.slipNo || s.slipId)}</strong></td>
+      <td class="hist-desktop-col"><strong>${escapeHtml(slipNo)}</strong></td>
       <td class="hist-desktop-col">${escapeHtml(dateStr)}</td>
-      <td class="hist-desktop-col">${escapeHtml(s.baseName)}</td>
+      <td class="hist-desktop-col">${escapeHtml(s.baseName || "")}</td>
       <td class="hist-desktop-col">${escapeHtml(s.staffName)}</td>
       <td class="hist-desktop-col">${escapeHtml(s.vendorName)}</td>
       <td class="hist-desktop-col">${sigBadge}</td>
       <td class="hist-desktop-col"><span class="brand-badge" style="background:var(--color-primary); color:var(--color-button-text); font-size:0.75rem;">完了</span></td>
-      <td class="hist-desktop-col">
-        <button type="button" class="btn btn-secondary" style="padding:0.25rem 0.6rem; font-size:0.8rem; min-height:auto;"
-          onclick="printSlipFromHistory(${idx})">印刷</button>
+      <td class="hist-desktop-col" style="white-space:nowrap;">
+        <button type="button" class="btn btn-secondary" style="padding:0.25rem 0.6rem; font-size:0.8rem; margin-right:0.3rem;"
+          onclick="openHistoryDetailModal('${escapeHtml(slipNo)}')">詳細</button>
+        <button type="button" class="btn btn-secondary" style="padding:0.25rem 0.6rem; font-size:0.8rem;"
+          onclick="printSlipFromHistory('${escapeHtml(slipNo)}')">印刷</button>
       </td>
     `;
     tbody.appendChild(tr);
   });
 }
 
-function printSlipFromHistory(index) {
-  const s = centralHistorySlips[index];
+// R-T. Read-Only 伝票詳細 Modal (オンデマンド fetchSlip & メモリキャッシュ & Decision C 厳格遵守)
+function openHistoryDetailModal(slipNo) {
+  if (!slipNo) return;
+  const modal = document.getElementById("history-detail-modal");
+  const body = document.getElementById("history-detail-modal-body") || document.getElementById("hist-detail-body");
+  const loading = document.getElementById("hist-detail-loading");
+  if (!modal || !body) return;
+
+  // モーダルを開きスクロールロック
+  modal.style.display = "flex";
+  document.body.style.overflow = "hidden";
+
+  // キャッシュチェック (Fast path)
+  if (historyDetailCache.has(slipNo)) {
+    renderHistoryDetailContent(historyDetailCache.get(slipNo));
+    return;
+  }
+
+  // オンデマンド取得 (Loading 表示)
+  if (loading) loading.style.display = "block";
+  body.style.display = "block";
+  body.innerHTML = `
+    <div style="text-align:center; padding:2.5rem 1rem; color:var(--color-text-muted);">
+      <p style="font-weight:700; margin-bottom:0.5rem;">伝票詳細を取得中...</p>
+      <div style="font-size:0.85rem;">伝票番号: ${escapeHtml(slipNo)}</div>
+    </div>
+  `;
+
+  gasClient.fetchSlip(slipNo).then(res => {
+    if (loading) loading.style.display = "none";
+    if (res && res.success && res.slip) {
+      historyDetailCache.set(slipNo, res.slip);
+      renderHistoryDetailContent(res.slip);
+    } else {
+      body.innerHTML = `
+        <div style="text-align:center; padding:2rem 1rem; color:var(--color-danger);">
+          <p style="font-weight:700; margin-bottom:0.5rem;">伝票詳細を取得できませんでした</p>
+          <p style="font-size:0.85rem; color:var(--color-text-muted);">${escapeHtml(res && res.error ? res.error : "通信エラーが発生しました。")}</p>
+        </div>
+      `;
+    }
+  }).catch(err => {
+    if (loading) loading.style.display = "none";
+    console.error("[app.js] fetchSlip error:", err);
+    body.innerHTML = `
+      <div style="text-align:center; padding:2rem 1rem; color:var(--color-danger);">
+        <p style="font-weight:700; margin-bottom:0.5rem;">伝票詳細を取得できませんでした</p>
+        <p style="font-size:0.85rem; color:var(--color-text-muted);">ネットワーク状態を確認してください。</p>
+      </div>
+    `;
+  });
+}
+
+function renderHistoryDetailContent(slip) {
+  const body = document.getElementById("history-detail-modal-body") || document.getElementById("hist-detail-body");
+  const loading = document.getElementById("hist-detail-loading");
+  if (loading) loading.style.display = "none";
+  if (!body || !slip) return;
+  body.style.display = "block";
+
+  const slipNo = slip.slipNo || slip.slipId || "";
+  const dateStr = getHistoryBusinessDate(slip) || "--";
+  const finStr = slip.finalizedAt || slip.createdAt || "--";
+
+  // 署名表示: Decision C 厳格遵守 (バイナリ/Base64/FileId 非表示、テキストバッジのみ)
+  const sigText = slip.signatureStatus === "DIGITAL"
+    ? `<span class="brand-badge" style="background:var(--color-success); font-size:0.85rem; padding:0.3rem 0.6rem;">【電子署名済み】</span>`
+    : `<span class="brand-badge" style="background:var(--color-tertiary); color:var(--color-headline); font-size:0.85rem; padding:0.3rem 0.6rem;">【署名なし】</span>`;
+
+  // 明細行生成 (CODE品、定型品、その他)
+  let itemsHtml = "";
+  const codeItems = Array.isArray(slip.codeItems) ? slip.codeItems : [];
+  const fixedItems = Array.isArray(slip.fixedItems) ? slip.fixedItems : [];
+  const otherItems = Array.isArray(slip.otherItems) ? slip.otherItems : [];
+
+  codeItems.forEach(item => {
+    itemsHtml += `
+      <tr>
+        <td>${escapeHtml(item.itemName || "")}</td>
+        <td><code>${escapeHtml(item.itemCode || "")}</code></td>
+        <td style="text-align:right; font-weight:600;">${escapeHtml(getPrintQuantityDisplay(item))}</td>
+      </tr>
+    `;
+  });
+
+  fixedItems.forEach(fi => {
+    itemsHtml += `
+      <tr>
+        <td>${escapeHtml(fi.itemName || "")}</td>
+        <td style="color:var(--color-text-muted); font-size:0.8rem;">定型品</td>
+        <td style="text-align:right; font-weight:600;">${escapeHtml(getPrintQuantityDisplay(fi))}</td>
+      </tr>
+    `;
+  });
+
+  otherItems.forEach(oi => {
+    itemsHtml += `
+      <tr>
+        <td>${escapeHtml(oi.itemName || "")}</td>
+        <td style="color:var(--color-text-muted); font-size:0.8rem;">その他</td>
+        <td style="text-align:right; font-weight:600;">${escapeHtml(oi.quantityInput || "")}</td>
+      </tr>
+    `;
+  });
+
+  if (!itemsHtml) {
+    itemsHtml = `<tr><td colspan="3" style="text-align:center; color:var(--color-text-muted); padding:1rem;">明細品目はありません</td></tr>`;
+  }
+
+  body.innerHTML = `
+    <div class="history-detail-grid">
+      <div class="history-detail-field">
+        <span class="history-detail-field-label">伝票番号</span>
+        <span class="history-detail-field-val" style="font-family:monospace;">${escapeHtml(slipNo)}</span>
+      </div>
+      <div class="history-detail-field">
+        <span class="history-detail-field-label">処分日 (業務日付)</span>
+        <span class="history-detail-field-val">${escapeHtml(dateStr)}</span>
+      </div>
+      <div class="history-detail-field">
+        <span class="history-detail-field-label">拠点名</span>
+        <span class="history-detail-field-val">${escapeHtml(slip.baseName || "")}</span>
+      </div>
+      <div class="history-detail-field">
+        <span class="history-detail-field-label">担当者 (社員番号)</span>
+        <span class="history-detail-field-val">${escapeHtml(slip.staffName || "")} ${slip.employeeNo ? `(${escapeHtml(slip.employeeNo)})` : ""}</span>
+      </div>
+      <div class="history-detail-field">
+        <span class="history-detail-field-label">受領業者名</span>
+        <span class="history-detail-field-val">${escapeHtml(slip.vendorName || "-")}</span>
+      </div>
+      <div class="history-detail-field">
+        <span class="history-detail-field-label">確定日時</span>
+        <span class="history-detail-field-val" style="font-size:0.8rem;">${escapeHtml(finStr)}</span>
+      </div>
+    </div>
+
+    <h4 style="font-size:0.95rem; margin:1rem 0 0.5rem 0; color:var(--color-headline);">処分資材明細</h4>
+    <table class="history-detail-table">
+      <thead>
+        <tr>
+          <th>品名</th>
+          <th style="width:25%;">区分 / コード</th>
+          <th style="width:25%; text-align:right;">数量</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${itemsHtml}
+      </tbody>
+    </table>
+
+    <div class="history-detail-signature-block">
+      <div>
+        <span style="font-weight:750; font-size:0.875rem; color:var(--color-headline);">受領署名状態:</span>
+        <span style="margin-left:0.5rem;">${sigText}</span>
+      </div>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="printSlipFromRecord(historyDetailCache.get('${escapeHtml(slipNo)}') || {})">この伝票を印刷</button>
+    </div>
+  `;
+}
+
+function closeHistoryDetailModal() {
+  const modal = document.getElementById("history-detail-modal");
+  if (modal) {
+    modal.style.display = "none";
+  }
+  document.body.style.overflow = "";
+}
+
+// 印刷処理互換ラッパー (インデックスまたは伝票番号を受け入れ)
+function printSlipFromHistory(param) {
+  let s = null;
+  if (typeof param === "number") {
+    s = (filteredHistorySlips && filteredHistorySlips[param]) || centralHistorySlips[param];
+  } else if (typeof param === "string") {
+    s = (filteredHistorySlips && filteredHistorySlips.find(x => (x.slipNo === param || x.slipId === param)))
+      || centralHistorySlips.find(x => (x.slipNo === param || x.slipId === param));
+  }
   if (!s) return;
 
-  // 詳細が空の場合は Central DB から個別取得
+  const slipNo = s.slipNo || s.slipId;
+  // 詳細キャッシュまたは既存コード品をチェック
+  if (historyDetailCache.has(slipNo)) {
+    printSlipFromRecord(historyDetailCache.get(slipNo));
+    return;
+  }
+
   if (!s.codeItems || s.codeItems.length === 0) {
-    gasClient.fetchSlip(s.slipNo || s.slipId).then(res => {
+    gasClient.fetchSlip(slipNo).then(res => {
       if (res && res.success && res.slip) {
+        historyDetailCache.set(slipNo, res.slip);
         printSlipFromRecord(res.slip);
       }
     });
@@ -2643,37 +3018,48 @@ function printSlipFromRecord(s) {
   }, 200);
 }
 
-// 15. CSV エクスポート (履歴全体)
+// 15. CSV エクスポート (P11 SUPERSEDED: 検索結果伝票一覧 Header CSV 契約)
+function generateHistoryHeaderCsv(slips) {
+  let csv = "\uFEFF";
+  csv += "伝票番号,処分日,Base名,社員番号,担当者,業者名,署名区分,状態,確定日時\r\n";
+  (slips || []).forEach(s => {
+    const row = [
+      sanitizeCsvCell(s.slipNo || s.slipId || ""),
+      sanitizeCsvCell(getHistoryBusinessDate(s)),
+      sanitizeCsvCell(s.baseName || ""),
+      sanitizeCsvCell(s.employeeNo || ""),
+      sanitizeCsvCell(s.staffName || ""),
+      sanitizeCsvCell(s.vendorName || ""),
+      sanitizeCsvCell(s.signatureStatus === "DIGITAL" ? "DIGITAL" : "NONE"),
+      sanitizeCsvCell(s.status || ""),
+      sanitizeCsvCell(s.finalizedAt || "")
+    ];
+    csv += row.join(",") + "\r\n";
+  });
+  return csv;
+}
+
 function exportHistoryCsv() {
-  const slips = centralHistorySlips;
-  if (!slips || slips.length === 0) {
-    showAppModal({ title: "お知らせ", message: "エクスポート可能な確定伝票がありません。" });
+  const activeBaseCode = workingBaseCode || resolvedBaseCode;
+  if (!activeBaseCode) {
+    showAppModal({ title: "拠点未設定", message: "入力Baseが設定されていないため、履歴CSVを出力できません。" });
     return;
   }
 
-  let csvContent = "\uFEFF";
-  csvContent += "伝票番号,発行日,Base名,担当者,業者名,資材コード,品名,数量,数量区分,署名区分\r\n";
+  // visibleCountの50件制限はCSVへ適用せず、filteredHistorySlips全件を対象
+  const slips = (filteredHistorySlips && filteredHistorySlips.length > 0)
+    ? filteredHistorySlips
+    : applyHistoryFilters(centralHistorySlips, historySearchState);
 
-  slips.forEach(s => {
-    (s.codeItems || []).forEach(it => {
-      if (s.status === "FINAL" && it.quantityType === "NUMBER" && typeof it.quantityValue === "number") {
-        csvContent += [
-          sanitizeCsvCell(s.slipId),
-          sanitizeCsvCell((s.createdAt || s.date || "").slice(0, 10)),
-          sanitizeCsvCell(s.baseName),
-          sanitizeCsvCell(s.staffName),
-          sanitizeCsvCell(s.vendorName),
-          sanitizeCsvCell(it.itemCode),
-          sanitizeCsvCell(it.itemName),
-          sanitizeCsvCell(it.quantityValue),
-          sanitizeCsvCell(it.quantityType),
-          sanitizeCsvCell(s.signatureStatus)
-        ].join(",") + "\r\n";
-      }
-    });
-  });
+  if (!slips || slips.length === 0) {
+    showAppModal({ title: "お知らせ", message: "出力対象の伝票がありません。" });
+    return;
+  }
 
-  downloadCsvFile(csvContent, `Takamiya_ScrapHistory_${resolvedBaseCode}_${new Date().toISOString().slice(0, 10)}.csv`);
+  const csvContent = generateHistoryHeaderCsv(slips);
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const filename = `Takamiya_ScrapHistory_${activeBaseCode}_${todayStr}.csv`;
+  downloadCsvFile(csvContent, filename);
 }
 
 // 16. 集計画面 (Central DB Source of Truth & 期間フィルター)
@@ -3002,15 +3388,12 @@ function sortScrapItems(items, column, order) {
 }
 
 function sanitizeCsvCell(val) {
-  if (val === null || val === undefined) return "";
-  let str = String(val);
-  if (/^[=+\-@\t\r]/.test(str)) {
+  if (val === null || val === undefined) return '""';
+  let str = String(val).trim();
+  if (/^[=\+\-@]/.test(str)) {
     str = "'" + str;
   }
-  if (str.includes('"') || str.includes(',') || str.includes('\n') || str.includes('\r')) {
-    return '"' + str.replace(/"/g, '""') + '"';
-  }
-  return str;
+  return '"' + str.replace(/"/g, '""') + '"';
 }
 
 function generateScrapCsvContent(sortedItems) {
@@ -3479,7 +3862,25 @@ if (typeof module !== "undefined" && module.exports) {
     getGasClientInstance: () => gasClient,
     setGasClientInstance: (c) => { gasClient = c; },
     setSubmissionBusy,
-    setFinalizeButtonsDisabled
+    setFinalizeButtonsDisabled,
+    // P11 History & Search
+    getHistoryBusinessDate,
+    normalizeHistorySearchText,
+    sortFinalHistorySlips,
+    applyHistoryFilters,
+    handleHistorySearch,
+    handleHistorySearchClear,
+    handleHistoryLoadMore,
+    openHistoryDetailModal,
+    closeHistoryDetailModal,
+    renderHistoryRows,
+    sanitizeCsvCell,
+    generateHistoryHeaderCsv,
+    exportHistoryCsv,
+    printSlipFromHistory,
+    getHistorySearchState: () => historySearchState,
+    getFilteredHistorySlips: () => filteredHistorySlips,
+    getHistoryDetailCache: () => historyDetailCache
   };
 }
 
@@ -3500,6 +3901,57 @@ if (typeof window !== "undefined") {
   window.setCurrentResumedDraftId = (id) => { currentResumedDraftId = id; };
   window.setSubmissionBusy = setSubmissionBusy;
   window.setFinalizeButtonsDisabled = setFinalizeButtonsDisabled;
+
+  // P11 History & Search
+  window.getHistoryBusinessDate = getHistoryBusinessDate;
+  window.normalizeHistorySearchText = normalizeHistorySearchText;
+  window.sortFinalHistorySlips = sortFinalHistorySlips;
+  window.applyHistoryFilters = applyHistoryFilters;
+  window.handleHistorySearch = handleHistorySearch;
+  window.handleHistorySearchClear = handleHistorySearchClear;
+  window.handleHistoryLoadMore = handleHistoryLoadMore;
+  window.openHistoryDetailModal = openHistoryDetailModal;
+  window.closeHistoryDetailModal = closeHistoryDetailModal;
+  window.renderHistoryRows = renderHistoryRows;
+  window.sanitizeCsvCell = sanitizeCsvCell;
+  window.generateHistoryHeaderCsv = generateHistoryHeaderCsv;
+  window.exportHistoryCsv = exportHistoryCsv;
+  window.printSlipFromHistory = printSlipFromHistory;
+  window.historyDetailCache = historyDetailCache;
 }
+
+// P11 モーダル用 Escape キー & 背景クリックリスナー
+if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      if (typeof document.getElementById === "function") {
+        const modal = document.getElementById("history-detail-modal");
+        if (modal && modal.style && modal.style.display !== "none") {
+          closeHistoryDetailModal();
+        }
+      }
+    }
+  });
+
+  const attachOverlayListener = () => {
+    if (typeof document.getElementById === "function") {
+      const detailModal = document.getElementById("history-detail-modal");
+      if (detailModal && typeof detailModal.addEventListener === "function") {
+        detailModal.addEventListener("click", (e) => {
+          if (e.target === detailModal) {
+            closeHistoryDetailModal();
+          }
+        });
+      }
+    }
+  };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", attachOverlayListener);
+  } else {
+    attachOverlayListener();
+  }
+}
+
 
 
