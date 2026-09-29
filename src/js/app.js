@@ -2283,40 +2283,115 @@ function executeDeleteDraft(draftId) {
   });
 }
 
-// 日付・日時フォーマットヘルパー (JST Asia/Tokyo)
-function formatJstDate(dateVal) {
-  if (!dateVal) return "--";
-  if (typeof dateVal === "string") {
-    const trimmed = dateVal.trim();
-    if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
-      return trimmed.slice(0, 10).replace(/-/g, "/");
-    }
-    if (/^\d{4}\/\d{2}\/\d{2}/.test(trimmed)) {
-      return trimmed.slice(0, 10);
+// 日付・日時フォーマットヘルパー (JST Asia/Tokyo 正規化 & 二重+9h防止)
+function toCanonicalBusinessDate(input) {
+  if (!input) return "";
+  if (typeof input === "string") {
+    const s = input.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    if (/^\d{4}\/\d{2}\/\d{2}$/.test(s)) return s.replace(/\//g, "-");
+  }
+
+  let d = null;
+  if (input instanceof Date) {
+    d = input;
+  } else if (typeof input === "string" || typeof input === "number") {
+    const parsed = Date.parse(input);
+    if (!isNaN(parsed)) {
+      d = new Date(parsed);
     }
   }
-  const d = new Date(dateVal);
-  if (isNaN(d.getTime())) return String(dateVal).slice(0, 10);
-  const utcMs = d.getTime() + (d.getTimezoneOffset() * 60 * 1000);
-  const jst = new Date(utcMs + (9 * 60 * 60 * 1000));
-  const yyyy = jst.getFullYear();
-  const mm = String(jst.getMonth() + 1).padStart(2, "0");
-  const dd = String(jst.getDate()).padStart(2, "0");
-  return `${yyyy}/${mm}/${dd}`;
+
+  if (!d || isNaN(d.getTime())) {
+    if (typeof input === "string") {
+      const m = input.match(/(\d{4})[-/](\d{2})[-/](\d{2})/);
+      if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+    }
+    return "";
+  }
+
+  try {
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Tokyo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    });
+    return formatter.format(d);
+  } catch (e) {
+    const jst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+    const y = jst.getUTCFullYear();
+    const m = String(jst.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(jst.getUTCDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
+}
+
+function formatJstDate(dateVal) {
+  const canonical = toCanonicalBusinessDate(dateVal);
+  if (!canonical) return "--";
+  return canonical.replace(/-/g, "/");
 }
 
 function formatJstDateTime(dateVal) {
   if (!dateVal) return "--";
-  const d = new Date(dateVal);
-  if (isNaN(d.getTime())) return String(dateVal);
-  const utcMs = d.getTime() + (d.getTimezoneOffset() * 60 * 1000);
-  const jst = new Date(utcMs + (9 * 60 * 60 * 1000));
-  const yyyy = jst.getFullYear();
-  const mm = String(jst.getMonth() + 1).padStart(2, "0");
-  const dd = String(jst.getDate()).padStart(2, "0");
-  const hh = String(jst.getHours()).padStart(2, "0");
-  const min = String(jst.getMinutes()).padStart(2, "0");
-  return `${yyyy}/${mm}/${dd} ${hh}:${min}`;
+  let d = null;
+  if (dateVal instanceof Date) {
+    d = dateVal;
+  } else if (typeof dateVal === "string") {
+    const s = dateVal.trim();
+    if (!s) return "--";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+      return s.replace(/-/g, "/") + " 00:00";
+    }
+    if (/^\d{4}\/\d{2}\/\d{2}$/.test(s)) {
+      return s + " 00:00";
+    }
+    const parsed = Date.parse(s);
+    if (!isNaN(parsed)) {
+      d = new Date(parsed);
+    }
+  } else if (typeof dateVal === "number") {
+    d = new Date(dateVal);
+  }
+
+  if (!d || isNaN(d.getTime())) {
+    const canonical = toCanonicalBusinessDate(dateVal);
+    if (canonical) return canonical.replace(/-/g, "/") + " 00:00";
+    return String(dateVal);
+  }
+
+  try {
+    const formatter = new Intl.DateTimeFormat("ja-JP", {
+      timeZone: "Asia/Tokyo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    });
+    const parts = formatter.formatToParts(d);
+    let year = "", month = "", day = "", hour = "", minute = "";
+    for (const p of parts) {
+      if (p.type === "year") year = p.value;
+      if (p.type === "month") month = p.value.padStart(2, "0");
+      if (p.type === "day") day = p.value.padStart(2, "0");
+      if (p.type === "hour") hour = p.value.padStart(2, "0");
+      if (p.type === "minute") minute = p.value.padStart(2, "0");
+    }
+    if (year && month && day) {
+      return `${year}/${month}/${day} ${hour || "00"}:${minute || "00"}`;
+    }
+  } catch (e) {}
+
+  const jst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+  const y = jst.getUTCFullYear();
+  const m = String(jst.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(jst.getUTCDate()).padStart(2, "0");
+  const h = String(jst.getUTCHours()).padStart(2, "0");
+  const min = String(jst.getUTCMinutes()).padStart(2, "0");
+  return `${y}/${m}/${day} ${h}:${min}`;
 }
 
 function sortDrafts(drafts) {
@@ -2493,14 +2568,21 @@ function fetchAndRenderHistory(tbody, baseCode, revision) {
 // P11 履歴検索・フィルター・ソート・詳細モーダル コアロジック
 // ============================================================
 
-// E. 業務日付取得ヘルパー (slip.date 優先、欠損時 createdAt の日付部分)
+// E. 業務日付取得ヘルパー (slip.date 優先、欠損時 createdAt。必ず canonical YYYY-MM-DD を返す)
 function getHistoryBusinessDate(slip) {
   if (!slip) return "";
-  if (slip.date && typeof slip.date === "string" && slip.date.trim() !== "") {
-    return slip.date.trim();
+  if (slip.date) {
+    if (typeof slip.date === "string" && slip.date.trim()) {
+      const c = toCanonicalBusinessDate(slip.date.trim());
+      if (c) return c;
+    } else {
+      const c = toCanonicalBusinessDate(slip.date);
+      if (c) return c;
+    }
   }
-  if (slip.createdAt && typeof slip.createdAt === "string") {
-    return slip.createdAt.slice(0, 10);
+  if (slip.createdAt) {
+    const c = toCanonicalBusinessDate(slip.createdAt);
+    if (c) return c;
   }
   return "";
 }
@@ -2511,7 +2593,7 @@ function normalizeHistorySearchText(value) {
 }
 
 // F. FINAL履歴の決定論的sort
-// 第1キー: Business Date DESC, 第2キー: FinalizedAt DESC, 第3キー: SlipNo DESC
+// 第1キー: Business Date DESC (canonical YYYY-MM-DD), 第2キー: FinalizedAt DESC, 第3キー: SlipNo DESC
 function sortFinalHistorySlips(slips) {
   if (!Array.isArray(slips)) return [];
   return slips.slice().sort((a, b) => {
@@ -2520,13 +2602,13 @@ function sortFinalHistorySlips(slips) {
     if (dateA !== dateB) {
       return dateB.localeCompare(dateA);
     }
-    const finA = a.finalizedAt || a.createdAt || "";
-    const finB = b.finalizedAt || b.createdAt || "";
+    const finA = String(a.finalizedAt || a.createdAt || "").trim();
+    const finB = String(b.finalizedAt || b.createdAt || "").trim();
     if (finA !== finB) {
       return finB.localeCompare(finA);
     }
-    const slipNoA = a.slipNo || a.slipId || "";
-    const slipNoB = b.slipNo || b.slipId || "";
+    const slipNoA = String(a.slipNo || a.slipId || "").trim();
+    const slipNoB = String(b.slipNo || b.slipId || "").trim();
     return slipNoB.localeCompare(slipNoA);
   });
 }
@@ -2618,7 +2700,7 @@ function handleHistoryLoadMore() {
   }
 }
 
-// 履歴テーブル描画 (50件表示制御・件数表示・モバイル業者名・詳細ボタン対応)
+// 履歴テーブル描画 (50件表示制御・件数表示・モバイル旧レイアウト復元・詳細/印刷ボタン対応)
 function renderHistoryRows(tbody, slips) {
   if (!tbody) return;
   tbody.innerHTML = "";
@@ -2663,42 +2745,44 @@ function renderHistoryRows(tbody, slips) {
 
   // 5. 行の描画
   visibleSlips.forEach((s) => {
-    const dateStr = getHistoryBusinessDate(s) || "--";
+    const displayDate = formatJstDateTime(s.date || s.createdAt);
     const slipNo = s.slipNo || s.slipId || "";
+    const baseName = s.baseName || resolvedBaseName || "";
+    const staffName = s.staffName || "-";
     const sigBadge = s.signatureStatus === "DIGITAL"
-      ? `<span class="brand-badge" style="background:var(--color-success); font-size:0.75rem;">電子署名済</span>`
-      : `<span class="brand-badge" style="background:var(--color-tertiary); color:var(--color-headline); font-size:0.75rem;">署名なし</span>`;
+      ? `<span class="hist-sig-badge brand-badge" style="background:var(--color-success); color:#fff; font-size:0.75rem;">電子署名済み</span>`
+      : `<span class="hist-sig-badge brand-badge" style="background:var(--color-tertiary); color:var(--color-headline); font-size:0.75rem;">署名なし</span>`;
 
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td class="history-col-mobile">
         <div class="history-row-1 history-row-top">
-          <span class="hist-date">${escapeHtml(dateStr)}</span>
+          <span class="hist-date">${escapeHtml(displayDate)}</span>
           <span class="hist-slip-no">${escapeHtml(slipNo)}</span>
         </div>
         <div class="history-row-2">
+          <span class="hist-base">${escapeHtml(baseName)}</span>
           <span class="hist-staff">${escapeHtml(s.staffName)}</span>
-          <span class="hist-vendor">${escapeHtml(s.vendorName || "-")}</span>
         </div>
         <div class="history-row-3 history-row-bottom">
           <div class="hist-actions">
             ${sigBadge}
-            <button type="button" class="btn btn-secondary btn-sm" style="min-height:38px; padding:0.25rem 0.6rem;" onclick="openHistoryDetailModal('${escapeHtml(slipNo)}')">詳細</button>
-            <button type="button" class="btn btn-secondary btn-sm" style="min-height:38px; padding:0.25rem 0.6rem;" onclick="printSlipFromHistory('${escapeHtml(slipNo)}')">印刷</button>
+            <button type="button" class="btn btn-secondary btn-sm hist-action-btn" onclick="openHistoryDetailModal('${escapeHtml(slipNo)}')">詳細</button>
+            <button type="button" class="btn btn-secondary btn-sm hist-action-btn" onclick="printSlipFromHistory('${escapeHtml(slipNo)}')">印刷</button>
           </div>
         </div>
       </td>
       <td class="hist-desktop-col"><strong>${escapeHtml(slipNo)}</strong></td>
-      <td class="hist-desktop-col">${escapeHtml(dateStr)}</td>
-      <td class="hist-desktop-col">${escapeHtml(s.baseName || "")}</td>
+      <td class="hist-desktop-col">${escapeHtml(displayDate)}</td>
+      <td class="hist-desktop-col">${escapeHtml(baseName)}</td>
       <td class="hist-desktop-col">${escapeHtml(s.staffName)}</td>
       <td class="hist-desktop-col">${escapeHtml(s.vendorName)}</td>
       <td class="hist-desktop-col">${sigBadge}</td>
       <td class="hist-desktop-col"><span class="brand-badge" style="background:var(--color-primary); color:var(--color-button-text); font-size:0.75rem;">完了</span></td>
-      <td class="hist-desktop-col" style="white-space:nowrap;">
-        <button type="button" class="btn btn-secondary" style="padding:0.25rem 0.6rem; font-size:0.8rem; margin-right:0.3rem;"
+      <td class="hist-desktop-col hist-desktop-actions">
+        <button type="button" class="btn btn-secondary hist-action-btn"
           onclick="openHistoryDetailModal('${escapeHtml(slipNo)}')">詳細</button>
-        <button type="button" class="btn btn-secondary" style="padding:0.25rem 0.6rem; font-size:0.8rem;"
+        <button type="button" class="btn btn-secondary hist-action-btn"
           onclick="printSlipFromHistory('${escapeHtml(slipNo)}')">印刷</button>
       </td>
     `;
@@ -2707,6 +2791,8 @@ function renderHistoryRows(tbody, slips) {
 }
 
 // R-T. Read-Only 伝票詳細 Modal (オンデマンド fetchSlip & メモリキャッシュ & Decision C 厳格遵守)
+let currentHistoryDetailSlip = null;
+
 function openHistoryDetailModal(slipNo) {
   if (!slipNo) return;
   const modal = document.getElementById("history-detail-modal");
@@ -2766,14 +2852,16 @@ function renderHistoryDetailContent(slip) {
   if (!body || !slip) return;
   body.style.display = "block";
 
-  const slipNo = slip.slipNo || slip.slipId || "";
-  const dateStr = getHistoryBusinessDate(slip) || "--";
-  const finStr = slip.finalizedAt || slip.createdAt || "--";
+  currentHistoryDetailSlip = slip;
 
-  // 署名表示: Decision C 厳格遵守 (バイナリ/Base64/FileId 非表示、テキストバッジのみ)
+  const slipNo = slip.slipNo || slip.slipId || "";
+  const dateStr = formatJstDateTime(slip.date || slip.createdAt);
+  const finStr = formatJstDateTime(slip.finalizedAt || slip.createdAt);
+
+  // 署名表示: Decision C 厳格遵守 (バイナリ/Base64/FileId 非表示、テキストバッジのみ、改行禁止)
   const sigText = slip.signatureStatus === "DIGITAL"
-    ? `<span class="brand-badge" style="background:var(--color-success); font-size:0.85rem; padding:0.3rem 0.6rem;">【電子署名済み】</span>`
-    : `<span class="brand-badge" style="background:var(--color-tertiary); color:var(--color-headline); font-size:0.85rem; padding:0.3rem 0.6rem;">【署名なし】</span>`;
+    ? `<span class="hist-sig-badge brand-badge" style="background:var(--color-success); color:#fff; font-size:0.85rem;">電子署名済み</span>`
+    : `<span class="hist-sig-badge brand-badge" style="background:var(--color-tertiary); color:var(--color-headline); font-size:0.85rem;">署名なし</span>`;
 
   // 明細行生成 (CODE品、定型品、その他)
   let itemsHtml = "";
@@ -2822,7 +2910,7 @@ function renderHistoryDetailContent(slip) {
         <span class="history-detail-field-val" style="font-family:monospace;">${escapeHtml(slipNo)}</span>
       </div>
       <div class="history-detail-field">
-        <span class="history-detail-field-label">処分日 (業務日付)</span>
+        <span class="history-detail-field-label">処分日時</span>
         <span class="history-detail-field-val">${escapeHtml(dateStr)}</span>
       </div>
       <div class="history-detail-field">
@@ -2839,7 +2927,7 @@ function renderHistoryDetailContent(slip) {
       </div>
       <div class="history-detail-field">
         <span class="history-detail-field-label">確定日時</span>
-        <span class="history-detail-field-val" style="font-size:0.8rem;">${escapeHtml(finStr)}</span>
+        <span class="history-detail-field-val">${escapeHtml(finStr)}</span>
       </div>
     </div>
 
@@ -2858,11 +2946,8 @@ function renderHistoryDetailContent(slip) {
     </table>
 
     <div class="history-detail-signature-block">
-      <div>
-        <span style="font-weight:750; font-size:0.875rem; color:var(--color-headline);">受領署名状態:</span>
-        <span style="margin-left:0.5rem;">${sigText}</span>
-      </div>
-      <button type="button" class="btn btn-secondary btn-sm" onclick="printSlipFromRecord(historyDetailCache.get('${escapeHtml(slipNo)}') || {})">この伝票を印刷</button>
+      <span style="font-weight:750; font-size:0.875rem; color:var(--color-headline);">受領署名状態:</span>
+      ${sigText}
     </div>
   `;
 }
@@ -2873,6 +2958,13 @@ function closeHistoryDetailModal() {
     modal.style.display = "none";
   }
   document.body.style.overflow = "";
+  currentHistoryDetailSlip = null;
+}
+
+function handleHistoryDetailPrint() {
+  if (currentHistoryDetailSlip) {
+    printSlipFromRecord(currentHistoryDetailSlip);
+  }
 }
 
 // 印刷処理互換ラッパー (インデックスまたは伝票番号を受け入れ)
@@ -3870,9 +3962,20 @@ if (typeof module !== "undefined" && module.exports) {
     applyHistoryFilters,
     handleHistorySearch,
     handleHistorySearchClear,
+    toCanonicalBusinessDate,
+    formatJstDate,
+    formatJstDateTime,
+    getHistoryBusinessDate,
+    normalizeHistorySearchText,
+    sortFinalHistorySlips,
+    applyHistoryFilters,
+    handleHistorySearch,
+    handleHistorySearchClear,
     handleHistoryLoadMore,
     openHistoryDetailModal,
+    renderHistoryDetailContent,
     closeHistoryDetailModal,
+    handleHistoryDetailPrint,
     renderHistoryRows,
     sanitizeCsvCell,
     generateHistoryHeaderCsv,
@@ -3902,7 +4005,10 @@ if (typeof window !== "undefined") {
   window.setSubmissionBusy = setSubmissionBusy;
   window.setFinalizeButtonsDisabled = setFinalizeButtonsDisabled;
 
-  // P11 History & Search
+  // P11 History & Search & UI Fix
+  window.toCanonicalBusinessDate = toCanonicalBusinessDate;
+  window.formatJstDate = formatJstDate;
+  window.formatJstDateTime = formatJstDateTime;
   window.getHistoryBusinessDate = getHistoryBusinessDate;
   window.normalizeHistorySearchText = normalizeHistorySearchText;
   window.sortFinalHistorySlips = sortFinalHistorySlips;
@@ -3911,7 +4017,9 @@ if (typeof window !== "undefined") {
   window.handleHistorySearchClear = handleHistorySearchClear;
   window.handleHistoryLoadMore = handleHistoryLoadMore;
   window.openHistoryDetailModal = openHistoryDetailModal;
+  window.renderHistoryDetailContent = renderHistoryDetailContent;
   window.closeHistoryDetailModal = closeHistoryDetailModal;
+  window.handleHistoryDetailPrint = handleHistoryDetailPrint;
   window.renderHistoryRows = renderHistoryRows;
   window.sanitizeCsvCell = sanitizeCsvCell;
   window.generateHistoryHeaderCsv = generateHistoryHeaderCsv;
