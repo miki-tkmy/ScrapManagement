@@ -15,7 +15,7 @@
 
 :root {
   /* Runtime Asset Identity (Section E) */
-  --scrap-style-runtime-rev: "P11-HISTORY-SEARCH-UI-FIX-R2-20260929-01";
+  --scrap-style-runtime-rev: "OPERATION-HOTFIX-20260930-01";
 
   /* 正式カラー変数 */
   --color-background: #FFFFFF;
@@ -1460,7 +1460,7 @@ body.modal-open {
   font-weight: 600;
 }
 
-/* PCテーブル 8列固定レイアウト (合計 100%) */
+/* PCテーブル 7列固定レイアウト (合計 100%, 拠点名列削除) */
 .history-table {
   width: 100% !important;
   min-width: 0 !important;
@@ -1468,14 +1468,14 @@ body.modal-open {
   border-collapse: collapse !important;
 }
 
-.history-table th:nth-child(1), .history-table td:nth-child(2) { width: 14%; } /* 伝票番号 */
-.history-table th:nth-child(2), .history-table td:nth-child(3) { width: 16%; } /* 処分日時 */
-.history-table th:nth-child(3), .history-table td:nth-child(4) { width: 10%; } /* 拠点名 */
-.history-table th:nth-child(4), .history-table td:nth-child(5) { width: 12%; } /* 担当者 */
-.history-table th:nth-child(5), .history-table td:nth-child(6) { width: 15%; } /* 業者名 */
-.history-table th:nth-child(6), .history-table td:nth-child(7) { width: 11%; } /* 署名区分 */
-.history-table th:nth-child(7), .history-table td:nth-child(8) { width: 7%; }  /* 状態 */
-.history-table th:nth-child(8), .history-table td:nth-child(9) { width: 15%; } /* 操作 */
+/* 7列明示的幅契約 */
+.history-table col.col-slip, .history-table th.col-slip, .history-table td.col-slip { width: 17% !important; } /* 伝票番号 */
+.history-table col.col-date, .history-table th.col-date, .history-table td.col-date { width: 14% !important; } /* 処分日 */
+.history-table col.col-staff, .history-table th.col-staff, .history-table td.col-staff { width: 13% !important; } /* 担当者 */
+.history-table col.col-vendor, .history-table th.col-vendor, .history-table td.col-vendor { width: 16% !important; } /* 業者名 */
+.history-table col.col-sig, .history-table th.col-sig, .history-table td.col-sig { width: 16% !important; } /* 署名区分 */
+.history-table col.col-status, .history-table th.col-status, .history-table td.col-status { width: 8% !important; text-align: center !important; }  /* 状態 */
+.history-table col.col-actions, .history-table th.col-actions, .history-table td.col-actions { width: 16% !important; text-align: center !important; } /* 操作 */
 
 /* PCテーブル セル折り返し制御 (縦書き化禁止) */
 .history-table th,
@@ -1490,20 +1490,33 @@ body.modal-open {
 }
 
 /* 担当者・業者は長い場合 ellipsis */
-.history-table td:nth-child(5),
-.history-table td:nth-child(6) {
+.history-table td.col-staff,
+.history-table td.col-vendor {
   overflow: hidden !important;
   text-overflow: ellipsis !important;
 }
 
-/* 操作セル (詳細・印刷の横並び) */
-.hist-desktop-actions {
+/* 状態セル (完了badge中央配置) */
+.history-table th.col-status,
+.history-table td.col-status {
+  text-align: center !important;
+}
+.history-table td.col-status .brand-badge {
+  display: inline-block !important;
+  margin: 0 auto !important;
+}
+
+/* 操作セル (詳細・印刷の横並び、td は table-cell を維持し内側ラッパーで flex) */
+.history-table th.col-actions,
+.history-table td.col-actions {
+  text-align: center !important;
+}
+.hist-desktop-actions-wrap {
   display: flex !important;
-  gap: 4px !important;
+  gap: 6px !important;
   justify-content: center !important;
   align-items: center !important;
-  padding: 0.35rem 0.2rem !important;
-  white-space: nowrap !important;
+  width: 100% !important;
 }
 
 .hist-action-btn {

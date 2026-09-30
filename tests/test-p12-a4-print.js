@@ -639,24 +639,30 @@ async function runAllTests() {
   });
 
   // -----------------------------------------------------------------------------
-  // TC-P12-006: Digital Signature Badge (AC-P12-12)
+  // TC-P12-006: Digital Signature Real Handwritten Image (AC-P12-12, Hotfix Remediation)
   // -----------------------------------------------------------------------------
-  await runTest("TC-P12-006", "Digital Signature: signatureStatus DIGITAL renders strict '電子署名確認済' text only (AC-P12-12, Decision P12-SIGN-01)", () => {
+  await runTest("TC-P12-006", "Digital Signature: signatureStatus DIGITAL renders actual handwritten signature image and suppresses text (AC-P12-12, Hotfix Remediation)", () => {
     setupDomTree();
+    const mockSigData = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
     const slip = {
       slipNo: "SCRAP-SIG-001",
       date: "2026-09-27",
-      signatureStatus: "DIGITAL"
+      signatureStatus: "DIGITAL",
+      vendorSignatureImage: mockSigData
     };
 
     printSlipFromRecord(slip);
 
+    const sigImg = document.getElementById("print-vendor-signature-img");
+    assert(sigImg, "Signature image element must exist");
+    assert.strictEqual(sigImg.src, mockSigData, "DIGITAL signature image must be set on sigImg.src");
+    assert.strictEqual(sigImg.style.display, "block", "DIGITAL signature image display must be 'block'");
+
     const statusTextEl = document.getElementById("print-vendor-signature-status-text");
-    assert(statusTextEl, "Signature status text element must exist");
-    assert.strictEqual(statusTextEl.textContent, "電子署名確認済", "DIGITAL must render '電子署名確認済'");
-    assert(!statusTextEl.textContent.includes("【"), "Must not contain bracket '【'");
-    assert(!statusTextEl.textContent.includes("署名なし"), "Must not contain '署名なし'");
-    assert.strictEqual(statusTextEl.style.display, "block", "Status text must be visible");
+    if (statusTextEl) {
+      assert.strictEqual(statusTextEl.textContent, "", "DIGITAL must NOT render replacement text '電子署名確認済'");
+      assert.strictEqual(statusTextEl.style.display, "none", "Status text element must be hidden");
+    }
   });
 
   // -----------------------------------------------------------------------------
@@ -672,10 +678,16 @@ async function runAllTests() {
 
     printSlipFromRecord(slip);
 
+    const sigImg = document.getElementById("print-vendor-signature-img");
+    assert(sigImg, "Signature image element must exist");
+    assert.strictEqual(sigImg.src, "", "NONE signature image src must be empty");
+    assert.strictEqual(sigImg.style.display, "none", "NONE signature image display must be 'none'");
+
     const statusTextEl = document.getElementById("print-vendor-signature-status-text");
-    assert(statusTextEl, "Signature status text element must exist");
-    assert.strictEqual(statusTextEl.textContent, "", "NONE status text must be completely blank");
-    assert.strictEqual(statusTextEl.style.display, "none", "Status text element display must be 'none'");
+    if (statusTextEl) {
+      assert.strictEqual(statusTextEl.textContent, "", "NONE status text must be completely blank");
+      assert.strictEqual(statusTextEl.style.display, "none", "Status text element display must be 'none'");
+    }
 
     // Verify paper signing container remains present
     const sigArea = document.getElementById("print-signature-area");
@@ -714,7 +726,7 @@ async function runAllTests() {
   // -----------------------------------------------------------------------------
   // TC-P12-009: Security Decision C Integrity & Full Attribute Audit (AC-P12-15, AC-P12-16)
   // -----------------------------------------------------------------------------
-  await runTest("TC-P12-009", "Security Decision C: signature Base64, binary, FileId, and Drive URLs not exposed to print DOM attributes or text (AC-P12-15, AC-P12-16)", () => {
+  await runTest("TC-P12-009", "Security Decision C: signature FileId and Drive URLs not exposed to print DOM attributes or text (AC-P12-15, AC-P12-16)", () => {
     setupDomTree();
 
     const P12_SECRET_BASE64 = "data:image/png;base64,P12_SECRET_BASE64_BYTES_CONFIDENTIAL";
@@ -725,7 +737,7 @@ async function runAllTests() {
       slipNo: "SCRAP-SECRET-001",
       date: "2026-09-27",
       signatureStatus: "DIGITAL",
-      signatureData: P12_SECRET_BASE64,
+      vendorSignatureImage: P12_SECRET_BASE64,
       signatureFileId: P12_SECRET_FILE_ID,
       signatureUrl: P12_SECRET_DRIVE_URL,
       codeItems: []
@@ -735,19 +747,17 @@ async function runAllTests() {
 
     const sigImg = document.getElementById("print-vendor-signature-img");
     assert(sigImg, "sigImg must exist in print-signature-area");
-    assert.strictEqual(sigImg.src, "", "sigImg.src must remain empty string");
-    assert.strictEqual(sigImg.style.display, "none", "sigImg must be hidden with display:none");
+    assert.strictEqual(sigImg.src, P12_SECRET_BASE64, "sigImg.src must display signature image for printing");
+    assert.strictEqual(sigImg.style.display, "block", "sigImg must be visible with display:block");
 
     const container = document.getElementById("print-slip-container");
     const fullHtml = container.innerHTML;
-    assert(!fullHtml.includes(P12_SECRET_BASE64), "Print DOM HTML must not contain Base64 data");
     assert(!fullHtml.includes(P12_SECRET_FILE_ID), "Print DOM HTML must not leak signatureFileId");
     assert(!fullHtml.includes(P12_SECRET_DRIVE_URL), "Print DOM HTML must not contain Drive URL");
 
     // BLOCKING-02: Recursive audit of all DOM subtree attributes, dataset, href, src, textContent
     const allValues = collectAllSubtreeValues(container);
     for (const val of allValues) {
-      assert(!val.includes(P12_SECRET_BASE64), `Subtree value '${val}' must not contain Base64 data`);
       assert(!val.includes(P12_SECRET_FILE_ID), `Subtree value '${val}' must not contain signatureFileId`);
       assert(!val.includes(P12_SECRET_DRIVE_URL), `Subtree value '${val}' must not contain Drive URL`);
       assert(!val.includes("drive.google.com"), `Subtree value '${val}' must not contain drive.google.com`);
@@ -812,11 +822,15 @@ async function runAllTests() {
       otherItems: []
     };
 
+    const testSigData = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
     const mockGasClient = {
       fetchSlip: async (id) => {
         fetchSlipCount++;
         fetchSlipCalledWith = id;
         return { success: true, slip: fullSlipResponse };
+      },
+      fetchPrintSignature: async (id) => {
+        return { success: true, slipNo: id, signatureStatus: "DIGITAL", signatureData: testSigData };
       }
     };
 
@@ -842,8 +856,10 @@ async function runAllTests() {
 
     const slipIdEl = document.getElementById("print-slip-id");
     assert.strictEqual(slipIdEl.textContent, targetSlipNo, "Slip id must match fetched record");
-    const sigTextEl = document.getElementById("print-vendor-signature-status-text");
-    assert.strictEqual(sigTextEl.textContent, "電子署名確認済", "Signature status must be 電子署名確認済");
+    const sigImg = document.getElementById("print-vendor-signature-img");
+    assert(sigImg, "Signature image element must exist");
+    assert.strictEqual(sigImg.src, testSigData, "Signature image must be loaded on print");
+    assert.strictEqual(sigImg.style.display, "block", "Signature image display must be block");
     assert.strictEqual(printCallCount, 1, "window.print() must have been invoked exactly once on cache miss");
 
     // 2. Cache HIT scenario (immediate second call)
@@ -877,9 +893,10 @@ async function runAllTests() {
     assert.strictEqual(slipIdEl.textContent, "SCRAP-DETAIL-001", "Slip id must match current detail slip");
     const dateEl = document.getElementById("print-info-date");
     assert.strictEqual(dateEl.textContent, "2026/09/27", "Date must be normalized YYYY/MM/DD");
-    const sigTextEl = document.getElementById("print-vendor-signature-status-text");
-    assert.strictEqual(sigTextEl.textContent, "", "NONE signature must be blank");
-    assert.strictEqual(sigTextEl.style.display, "none", "Status text display must be none");
+    const sigImg = document.getElementById("print-vendor-signature-img");
+    assert(sigImg, "Signature image element must exist");
+    assert.strictEqual(sigImg.src, "", "NONE signature image must be blank");
+    assert.strictEqual(sigImg.style.display, "none", "NONE signature image display must be none");
   });
 
   // -----------------------------------------------------------------------------
@@ -889,6 +906,7 @@ async function runAllTests() {
     setupDomTree();
 
     // 1. Completion Print DIGITAL
+    const mockSig = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
     const newlyFinalizedDigital = {
       slipNo: "SCRAP-NEW-DIGITAL",
       date: "2026-09-30",
@@ -896,7 +914,7 @@ async function runAllTests() {
       staffName: "担当者D",
       vendorName: "業者Z",
       signatureStatus: "DIGITAL",
-      signatureData: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+      vendorSignatureImage: mockSig,
       codeItems: []
     };
 
@@ -905,10 +923,9 @@ async function runAllTests() {
 
     const slipIdEl = document.getElementById("print-slip-id");
     assert.strictEqual(slipIdEl.textContent, "SCRAP-NEW-DIGITAL", "Slip id must match newly finalized slip");
-    const sigTextDigital = document.getElementById("print-vendor-signature-status-text");
-    assert.strictEqual(sigTextDigital.textContent, "電子署名確認済", "Newly finalized DIGITAL must render '電子署名確認済'");
     const sigImg = document.getElementById("print-vendor-signature-img");
-    assert.strictEqual(sigImg.src, "", "Image src must remain empty despite signatureData present in memory");
+    assert.strictEqual(sigImg.src, mockSig, "Image src must be set with vendorSignatureImage");
+    assert.strictEqual(sigImg.style.display, "block", "Image display must be block");
 
     // 2. Completion Print NONE
     const newlyFinalizedNone = {
@@ -924,20 +941,20 @@ async function runAllTests() {
     sessionStorage.setItem("scrap_last_final_slip", JSON.stringify(newlyFinalizedNone));
     handleCompletionPrint();
 
-    const sigTextNone = document.getElementById("print-vendor-signature-status-text");
-    assert.strictEqual(sigTextNone.textContent, "", "Newly finalized NONE must be blank");
-    assert.strictEqual(sigTextNone.style.display, "none", "Status text display must be none");
+    assert.strictEqual(sigImg.src, "", "Newly finalized NONE must be blank");
+    assert.strictEqual(sigImg.style.display, "none", "Status text display must be none");
   });
 
   // -----------------------------------------------------------------------------
   // TC-P12-013: Print CSS Contract Static Audit (AC-P12-01, AC-P12-02)
   // -----------------------------------------------------------------------------
-  await runTest("TC-P12-013", "Print CSS Contract: size A4 portrait, 8mm 10mm margins, page-break and weight suppression (AC-P12-01, AC-P12-02)", () => {
+  await runTest("TC-P12-013", "Print CSS Contract: size A4 portrait, 20mm 16mm 15mm 16mm margins, page-break and weight suppression (AC-P12-01, AC-P12-02)", () => {
     assert(printCssContent.includes("@media print"), "print.css must contain @media print");
 
     // @page rules
     assert(/@page\s*\{[^}]*size:\s*A4\s+portrait/i.test(printCssContent), "print.css must define @page size: A4 portrait");
-    assert(/@page\s*\{[^}]*margin:\s*8mm\s+10mm/i.test(printCssContent), "print.css must define @page margin: 8mm 10mm");
+    assert(/@page\s*\{[^}]*margin:\s*20mm\s+16mm\s+15mm\s+16mm/i.test(printCssContent), "print.css must define @page margin: 20mm 16mm 15mm 16mm");
+
 
     // Page break control
     assert(
@@ -1002,7 +1019,11 @@ async function runAllTests() {
       const candidateSuitePaths = [
         path.resolve(__dirname, name),
         path.resolve(__dirname, "../tests", name),
-        path.resolve(process.cwd(), "tests", name)
+        path.resolve(__dirname, "../../tests", name),
+        path.resolve(__dirname, "../../../tests", name),
+        path.resolve(process.cwd(), "tests", name),
+        path.resolve(process.cwd(), "../tests", name),
+        path.resolve(process.cwd(), "../../tests", name)
       ];
       const suitePath = candidateSuitePaths.find(p => fs.existsSync(p));
       assert(suitePath, `Suite file ${name} must exist on disk`);

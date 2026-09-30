@@ -1,7 +1,7 @@
 // アプリケーション統合コントローラー (app.js)
 // ========================================================================================
 // Runtime Asset Identity (Section E)
-const SCRAP_APP_RUNTIME_REV = "P11-HISTORY-SEARCH-UI-FIX-R2-20260929-01";
+const SCRAP_APP_RUNTIME_REV = "OPERATION-HOTFIX-20260930-01";
 if (typeof window !== "undefined") {
   window.SCRAP_APP_RUNTIME_REV = SCRAP_APP_RUNTIME_REV;
 }
@@ -2795,9 +2795,9 @@ function renderHistoryRows(tbody, slips) {
   if (filteredHistorySlips.length === 0) {
     const isSearchFiltered = (historySearchState.fromDate || historySearchState.toDate || historySearchState.keyword || historySearchState.signatureStatus !== "ALL");
     if (totalFinalSlips === 0 || !isSearchFiltered) {
-      tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--color-text-muted); padding:1.5rem;">確定された処分伝票はありません (拠点: ${escapeHtml(resolvedBaseName || workingBaseName)})。</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--color-text-muted); padding:1.5rem;">確定された処分伝票はありません (拠点: ${escapeHtml(resolvedBaseName || workingBaseName)})。</td></tr>`;
     } else {
-      tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--color-text-muted); padding:1.5rem;">
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--color-text-muted); padding:1.5rem;">
         検索条件に一致する伝票はありません。<br>
         <button type="button" class="btn btn-secondary btn-sm" style="margin-top:0.6rem; min-height:36px;" onclick="handleHistorySearchClear()">条件をクリア</button>
       </td></tr>`;
@@ -2815,11 +2815,10 @@ function renderHistoryRows(tbody, slips) {
     loadMoreContainer.style.display = filteredHistorySlips.length > historySearchState.visibleCount ? "block" : "none";
   }
 
-  // 5. 行の描画
+  // 5. 行の描画 (7列契約: 伝票番号 17%, 処分日 14%, 担当者 13%, 業者名 16%, 署名区分 16%, 状態 8%, 操作 16%)
   visibleSlips.forEach((s) => {
     const displayDate = formatJstDateTime(s.date || s.createdAt);
     const slipNo = s.slipNo || s.slipId || "";
-    const baseName = s.baseName || resolvedBaseName || "";
     const staffName = s.staffName || "-";
     const sigBadge = s.signatureStatus === "DIGITAL"
       ? `<span class="hist-sig-badge badge-digital">電子署名済み</span>`
@@ -2833,8 +2832,7 @@ function renderHistoryRows(tbody, slips) {
           <span class="hist-slip-no">${escapeHtml(slipNo)}</span>
         </div>
         <div class="history-row-2">
-          <span class="hist-base">${escapeHtml(baseName)}</span>
-          <span class="hist-staff">${escapeHtml(s.staffName)}</span>
+          <span class="hist-staff">${escapeHtml(staffName)}</span>
         </div>
         <div class="history-row-3 history-row-bottom">
           <div class="hist-actions">
@@ -2844,18 +2842,19 @@ function renderHistoryRows(tbody, slips) {
           </div>
         </div>
       </td>
-      <td class="hist-desktop-col"><strong>${escapeHtml(slipNo)}</strong></td>
-      <td class="hist-desktop-col">${escapeHtml(displayDate)}</td>
-      <td class="hist-desktop-col">${escapeHtml(baseName)}</td>
-      <td class="hist-desktop-col">${escapeHtml(s.staffName)}</td>
-      <td class="hist-desktop-col">${escapeHtml(s.vendorName)}</td>
-      <td class="hist-desktop-col">${sigBadge}</td>
-      <td class="hist-desktop-col"><span class="brand-badge" style="background:var(--color-primary); color:var(--color-button-text); font-size:0.75rem;">完了</span></td>
-      <td class="hist-desktop-col hist-desktop-actions">
-        <button type="button" class="btn btn-secondary hist-action-btn"
-          onclick="openHistoryDetailModal('${escapeHtml(slipNo)}')">詳細</button>
-        <button type="button" class="btn btn-secondary hist-action-btn"
-          onclick="printSlipFromHistory('${escapeHtml(slipNo)}')">印刷</button>
+      <td class="hist-desktop-col col-slip"><strong>${escapeHtml(slipNo)}</strong></td>
+      <td class="hist-desktop-col col-date">${escapeHtml(displayDate)}</td>
+      <td class="hist-desktop-col col-staff">${escapeHtml(staffName)}</td>
+      <td class="hist-desktop-col col-vendor">${escapeHtml(s.vendorName || "-")}</td>
+      <td class="hist-desktop-col col-sig">${sigBadge}</td>
+      <td class="hist-desktop-col col-status"><span class="brand-badge" style="background:var(--color-primary); color:var(--color-button-text); font-size:0.75rem;">完了</span></td>
+      <td class="hist-desktop-col col-actions">
+        <div class="hist-desktop-actions-wrap">
+          <button type="button" class="btn btn-secondary hist-action-btn"
+            onclick="openHistoryDetailModal('${escapeHtml(slipNo)}')">詳細</button>
+          <button type="button" class="btn btn-secondary hist-action-btn"
+            onclick="printSlipFromHistory('${escapeHtml(slipNo)}')">印刷</button>
+        </div>
       </td>
     `;
     tbody.appendChild(tr);
@@ -3033,9 +3032,45 @@ function closeHistoryDetailModal() {
   currentHistoryDetailSlip = null;
 }
 
+async function prepareAndPrintSlip(s) {
+  if (!s) return;
+  const slipNo = s.slipNo || s.slipId;
+  const baseCode = s.baseCode || workingBaseCode || resolvedBaseCode || "";
+  if (s.signatureStatus === "DIGITAL" && !s.vendorSignatureImage && !s.signatureData) {
+    if (gasClient && typeof gasClient.fetchPrintSignature === "function") {
+      try {
+        const sigRes = await gasClient.fetchPrintSignature(slipNo, baseCode);
+        if (sigRes && sigRes.success && sigRes.signatureData) {
+          s.vendorSignatureImage = sigRes.signatureData;
+        } else {
+          showAppModal({
+            title: "署名画像取得エラー",
+            message: "電子署名画像の取得に失敗したため、印刷を中止しました。通信状態を確認して再試行してください。"
+          });
+          return;
+        }
+      } catch (e) {
+        console.warn("[app.js] Failed to fetch print signature:", e);
+        showAppModal({
+          title: "署名画像取得エラー",
+          message: "電子署名画像の取得中にエラーが発生したため、印刷を中止しました。"
+        });
+        return;
+      }
+    } else {
+      showAppModal({
+        title: "署名画像取得エラー",
+        message: "電子署名通信クライアントが利用できないため、印刷を中止しました。"
+      });
+      return;
+    }
+  }
+  printSlipFromRecord(s);
+}
+
 function handleHistoryDetailPrint() {
   if (currentHistoryDetailSlip) {
-    printSlipFromRecord(currentHistoryDetailSlip);
+    prepareAndPrintSlip(currentHistoryDetailSlip);
   }
 }
 
@@ -3053,7 +3088,7 @@ function printSlipFromHistory(param) {
   const slipNo = s.slipNo || s.slipId;
   // 詳細キャッシュまたは既存コード品をチェック
   if (historyDetailCache.has(slipNo)) {
-    printSlipFromRecord(historyDetailCache.get(slipNo));
+    prepareAndPrintSlip(historyDetailCache.get(slipNo));
     return;
   }
 
@@ -3061,11 +3096,11 @@ function printSlipFromHistory(param) {
     gasClient.fetchSlip(slipNo).then(res => {
       if (res && res.success && res.slip) {
         historyDetailCache.set(slipNo, res.slip);
-        printSlipFromRecord(res.slip);
+        prepareAndPrintSlip(res.slip);
       }
     });
   } else {
-    printSlipFromRecord(s);
+    prepareAndPrintSlip(s);
   }
 }
 
@@ -3157,39 +3192,54 @@ function printSlipFromRecord(s) {
     });
   }
 
-  // 署名欄: Architecture Decision C (C_ANONYMOUS_API_NO_SIGNATURE_BINARY)
-  // Architecture Decision C Compatibility (SIG-ACCESS-011: 【電子署名済み】 / SIG-ACCESS-012: 【署名なし】)
-  // P12 Formal Visual Contract (Decision P12-SIGN-01 / P12-SIGN-02 / P12-SIGN-03):
-  // - DIGITAL: 「電子署名確認済」のみ印字 (内部注記・ブラケット・画像は一切印字しない)
-  // - NONE: 署名枠内は完全空欄 (「署名なし」文言も印字しない。紙手書き署名欄を維持)
+  // 署名欄: DIGITAL 署名時は実際の手書き署名画像を #print-vendor-signature-img へ表示
+  // NONE 時は完全空欄 (紙手書き署名欄を維持)
   const sigImg = document.getElementById("print-vendor-signature-img");
   const sigArea = document.getElementById("print-signature-area");
-  if (sigImg) {
-    sigImg.src = "";
-    sigImg.style.display = "none";
-  }
-  if (sigArea) {
-    let textEl = document.getElementById("print-vendor-signature-status-text");
-    if (!textEl) {
-      textEl = document.createElement("div");
-      textEl.id = "print-vendor-signature-status-text";
-      sigArea.appendChild(textEl);
-    }
-    if (s.signatureStatus === "DIGITAL") {
-      textEl.textContent = "電子署名確認済";
-      textEl.style.fontWeight = "bold";
-      textEl.style.fontSize = "10pt";
-      textEl.style.color = "#111";
-      textEl.style.display = "block";
-    } else {
-      textEl.textContent = "";
-      textEl.style.display = "none";
-    }
+  let textEl = document.getElementById("print-vendor-signature-status-text");
+  if (textEl) {
+    textEl.textContent = "";
+    textEl.style.display = "none";
   }
 
-  setTimeout(() => {
-    window.print();
-  }, 200);
+  // 他伝票の署名混入を防止するため、印刷対象伝票オブジェクトに直接紐づく署名データのみを使用
+  const sigData = s.vendorSignatureImage || s.signatureData || null;
+
+  let printed = false;
+  const triggerPrint = () => {
+    if (printed) return;
+    printed = true;
+    setTimeout(() => {
+      window.print();
+    }, 50);
+  };
+
+  if (s.signatureStatus === "DIGITAL" && sigData) {
+    if (sigImg) {
+      sigImg.onload = () => {
+        triggerPrint();
+      };
+      sigImg.onerror = () => {
+        console.error("Failed to load signature image in print DOM");
+        triggerPrint();
+      };
+      sigImg.src = sigData;
+      sigImg.style.display = "block";
+      if (sigImg.complete) {
+        triggerPrint();
+      } else {
+        setTimeout(triggerPrint, 80);
+      }
+    } else {
+      triggerPrint();
+    }
+  } else {
+    if (sigImg) {
+      sigImg.src = "";
+      sigImg.style.display = "none";
+    }
+    triggerPrint();
+  }
 }
 
 // 15. CSV エクスポート (P11 SUPERSEDED: 検索結果伝票一覧 Header CSV 契約)
@@ -3294,11 +3344,13 @@ function renderSummaryView() {
   // 1. キャッシュチェック (Fast Path: 即時描画)
   const cached = TerminalStorage.getSummaryCache(baseCode, fromDate, toDate);
   const cachedData = cached ? (cached.data || cached) : null;
-  if (cachedData) {
+  // 古い空items不具合キャッシュ検知 (伝票ありだがitems空配列の場合はキャッシュヒットとみなさず再取得)
+  const isStaleEmptyItems = cachedData && cachedData.totalSlipsCount > 0 && (!cachedData.items || cachedData.items.length === 0);
+  if (cachedData && !isStaleEmptyItems) {
     currentSummaryData = cachedData;
     updateSummaryUi(cachedData);
   } else {
-    // 初回キャッシュなし時のみ Loading 表示
+    // 初回キャッシュなし時または古い空itemsキャッシュ時は Loading 表示
     if (tbody) {
       tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--color-text-muted); padding:1.5rem;">集計データを取得中...</td></tr>`;
     }
@@ -3313,12 +3365,12 @@ function renderSummaryView() {
         if (stateRes && stateRes.success) {
           TerminalStorage.saveStateSnapshot(baseCode, stateRes);
           handleStateComparison(stateRes);
-        } else if (!cachedData) {
+        } else if (!cachedData || isStaleEmptyItems) {
           fetchAndRenderSummary(tbody, baseCode, fromDate, toDate, { slipCountRevision: 1, materialSummaryRevision: 1 });
         }
       }).catch(err => {
         console.error("[app.js] fetchState error:", err);
-        if (!cachedData) {
+        if (!cachedData || isStaleEmptyItems) {
           fetchAndRenderSummary(tbody, baseCode, fromDate, toDate, { slipCountRevision: 1, materialSummaryRevision: 1 });
         }
       });
@@ -3335,19 +3387,19 @@ function renderSummaryView() {
         if (stateRes && stateRes.success) {
           TerminalStorage.saveStateSnapshot(baseCode, stateRes);
           handleStateComparison(stateRes);
-        } else if (!cachedData) {
+        } else if (!cachedData || isStaleEmptyItems) {
           fetchAndRenderSummary(tbody, baseCode, fromDate, toDate, { slipCountRevision: targetSlipRev, materialSummaryRevision: 1 });
         }
       }).catch(err => {
         console.error("[app.js] fetchState error:", err);
-        if (!cachedData) {
+        if (!cachedData || isStaleEmptyItems) {
           fetchAndRenderSummary(tbody, baseCode, fromDate, toDate, { slipCountRevision: targetSlipRev, materialSummaryRevision: 1 });
         }
       });
       return;
     }
 
-    if (!cached) {
+    if (!cached || isStaleEmptyItems) {
       fetchAndRenderSummary(tbody, baseCode, fromDate, toDate, { slipCountRevision: targetSlipRev, materialSummaryRevision: targetMatRev });
       return;
     }

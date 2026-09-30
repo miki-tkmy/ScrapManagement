@@ -7,7 +7,7 @@
 // - 中央履歴 (fetchHistory), 伝票詳細 (fetchSlip), 中央集計 (fetchSummary), 社員照会 (lookupEmployee)
 // ========================================================================================
 
-const SCRAP_FRONTEND_BUILD_ID = "P11-HISTORY-SEARCH-UI-FIX-R2-20260929-01";
+const SCRAP_FRONTEND_BUILD_ID = "OPERATION-HOTFIX-20260930-01";
 if (typeof window !== "undefined") {
   window.SCRAP_FRONTEND_BUILD_ID = SCRAP_FRONTEND_BUILD_ID;
 }
@@ -629,6 +629,55 @@ class GasClient {
       return data;
     } catch (e) {
       console.error("[gasClient] fetchSlip failed:", e);
+      return {
+        success: false,
+        mode: "GAS_STAGING",
+        error: "STAGING_BACKEND_UNAVAILABLE",
+        message: e.message
+      };
+    }
+  }
+
+  // 6.2. 印刷専用手書き署名画像取得 (GET action=printSignature&slipNo=...)
+  // Architecture Decision C: 一般履歴API (fetchHistory/fetchSlip) ではBase64/FileId/URL非公開を維持。
+  // 帳票印刷という正式業務出力に限り、専用エンドポイントで署名画像バイナリ (Data URL) を取得する。
+  async fetchPrintSignature(slipId, baseCode = "") {
+    if (!slipId) {
+      return { success: false, error: "MISSING_SLIP_ID" };
+    }
+
+    if (this.isMockMode) {
+      const found = (this.mockSlips || []).find(s => s.slipId === slipId || s.slipNo === slipId || s.scrapId === slipId);
+      if (found && found.vendorSignatureImage) {
+        return { success: true, mode: "MOCK", slipNo: slipId, signatureStatus: "DIGITAL", signatureData: found.vendorSignatureImage };
+      }
+      try {
+        const raw = typeof localStorage !== "undefined" ? localStorage.getItem("scrap_confirmed_slips") : null;
+        const local = raw ? JSON.parse(raw) : [];
+        const lf = local.find(s => s.slipId === slipId || s.slipNo === slipId || s.scrapId === slipId);
+        if (lf && lf.vendorSignatureImage) {
+          return { success: true, mode: "MOCK", slipNo: slipId, signatureStatus: "DIGITAL", signatureData: lf.vendorSignatureImage };
+        }
+      } catch (e) {}
+      return { success: true, mode: "MOCK", slipNo: slipId, signatureStatus: "NONE", signatureData: null };
+    }
+
+    if (this.isUnconfiguredStaging) {
+      return { success: false, mode: "STAGING_UNCONFIGURED", error: "STAGING_ENDPOINT_NOT_CONFIGURED" };
+    }
+
+    try {
+      let url = `${this.endpointUrl}?action=printSignature&slipNo=${encodeURIComponent(slipId)}`;
+      if (baseCode) {
+        url += `&baseCode=${encodeURIComponent(baseCode)}`;
+      }
+      const resp = await fetch(url, { method: "GET" });
+      if (!resp.ok) throw new Error(`HTTP Error: ${resp.status}`);
+      const data = await resp.json();
+      data.mode = "GAS_STAGING";
+      return data;
+    } catch (e) {
+      console.error("[gasClient] fetchPrintSignature failed:", e);
       return {
         success: false,
         mode: "GAS_STAGING",

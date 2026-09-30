@@ -1,0 +1,27 @@
+================================================================================
+SCRAPMANAGEMENT P11 HISTORY / SEARCH - FULL REGRESSION TEST RUN LOG
+Timestamp: 2026-09-30T08:04:35.060Z
+================================================================================
+
+[SUITE 1/14] gate3a8_draft_test_runner.js: PASS (20 / 20 passed, 0 failed)
+[SUITE 2/14] test-p08-final-remediation.js: PASS (10 / 10 passed, 0 failed)
+[SUITE 3/14] test-p08-ux-remediation.js: PASS (15 / 15 passed, 0 failed)
+[SUITE 4/14] test-p08-signed-hardening.js: PASS (7 / 7 passed, 0 failed)
+[SUITE 5/14] test-p09-asbuilt-audit.js: PASS (20 / 20 passed, 0 failed)
+[SUITE 6/14] test-p09-codex-hardening.js: PASS (7 / 7 passed, 0 failed)
+[SUITE 7/14] test-p10-asbuilt-audit.js: PASS (22 / 22 passed, 0 failed)
+[SUITE 8/14] test-p10-codex-hardening.js: PASS (5 / 5 passed, 0 failed)
+[SUITE 9/14] test-hard-fix-blocking.js: PASS (34 / 34 passed, 0 failed)
+[SUITE 10/14] test-staging-promotion-gate.js: PASS (25 / 25 passed, 0 failed)
+[SUITE 11/14] test-signature-access-separation-c.js: PASS (22 / 22 passed, 0 failed)
+[SUITE 12/14] test-p11-history-search.js: PASS (44 / 44 passed, 0 failed)
+[SUITE 13/14] test-p11-ui-fix.js: PASS (20 / 20 passed, 0 failed)
+[SUITE 14/14] test-p11-ui-fix-r2.js: PASS (10 / 10 passed, 0 failed)
+
+================================================================================
+TOTAL SUITES: 14
+TOTAL TESTS:  261
+TOTAL PASSED: 261
+TOTAL FAILED: 0
+OVERALL STATUS: ALL_TESTS_PASS
+================================================================================
