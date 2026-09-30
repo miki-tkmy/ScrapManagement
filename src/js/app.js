@@ -3108,7 +3108,11 @@ function printSlipFromRecord(s) {
   const printStaffEl = document.getElementById("print-info-staff");
   const printVendorEl = document.getElementById("print-info-vendor");
 
-  if (printDateEl) printDateEl.textContent = (s.createdAt || s.date || "").slice(0, 10);
+  if (printDateEl) {
+    const rawDate = s.date || s.createdAt || "";
+    const canonical = toCanonicalBusinessDate(rawDate);
+    printDateEl.textContent = canonical ? canonical.replace(/-/g, "/") : "";
+  }
   if (printBaseEl) printBaseEl.textContent = s.baseName || "";
   if (printStaffEl) printStaffEl.textContent = s.staffName || "";
   if (printVendorEl) printVendorEl.textContent = s.vendorName || "";
@@ -3154,7 +3158,10 @@ function printSlipFromRecord(s) {
   }
 
   // 署名欄: Architecture Decision C (C_ANONYMOUS_API_NO_SIGNATURE_BINARY)
-  // 履歴詳細・印刷時に画像 Base64 は img.src にセットせず、テキストで安全に明示する。
+  // Architecture Decision C Compatibility (SIG-ACCESS-011: 【電子署名済み】 / SIG-ACCESS-012: 【署名なし】)
+  // P12 Formal Visual Contract (Decision P12-SIGN-01 / P12-SIGN-02 / P12-SIGN-03):
+  // - DIGITAL: 「電子署名確認済」のみ印字 (内部注記・ブラケット・画像は一切印字しない)
+  // - NONE: 署名枠内は完全空欄 (「署名なし」文言も印字しない。紙手書き署名欄を維持)
   const sigImg = document.getElementById("print-vendor-signature-img");
   const sigArea = document.getElementById("print-signature-area");
   if (sigImg) {
@@ -3169,11 +3176,14 @@ function printSlipFromRecord(s) {
       sigArea.appendChild(textEl);
     }
     if (s.signatureStatus === "DIGITAL") {
-      textEl.innerHTML = '<span style="font-weight:bold; font-size:10pt; color:#111;">【電子署名済み】</span><br><span style="font-size:7pt; color:#666;">（署名画像は履歴画面では表示されません）</span>';
+      textEl.textContent = "電子署名確認済";
+      textEl.style.fontWeight = "bold";
+      textEl.style.fontSize = "10pt";
+      textEl.style.color = "#111";
       textEl.style.display = "block";
     } else {
-      textEl.innerHTML = '<span style="font-size:9pt; color:#888;">【署名なし】</span>';
-      textEl.style.display = "block";
+      textEl.textContent = "";
+      textEl.style.display = "none";
     }
   }
 
