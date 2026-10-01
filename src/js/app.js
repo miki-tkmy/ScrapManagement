@@ -1,7 +1,7 @@
 // アプリケーション統合コントローラー (app.js)
 // ========================================================================================
 // Runtime Asset Identity (Section E)
-const SCRAP_APP_RUNTIME_REV = "OPERATION-HOTFIX-20260930-01";
+const SCRAP_APP_RUNTIME_REV = "OPERATION-HOTFIX-20260930-02";
 if (typeof window !== "undefined") {
   window.SCRAP_APP_RUNTIME_REV = SCRAP_APP_RUNTIME_REV;
 }
@@ -128,6 +128,10 @@ function runBootstrapSequence() {
         setupHalfWidthNormalization(document.getElementById("other-name-input"));
         setupHalfWidthNormalization(document.getElementById("other-qty-input"));
       }
+    },
+    {
+      name: "initVendorInputHandlers",
+      fn: () => initVendorInputHandlers()
     },
     {
       name: "updateDisplays",
@@ -461,21 +465,27 @@ function initUserSettings() {
     // 伝票入力画面のロック & UI反映
     applyEmployeeLockToForm();
     hideEmployeeUnconfiguredBanner();
+    applyEmployeeDefaultVendorToForm();
 
     // V3.10 SWR: バックグラウンドで最新 Preference リビジョンを確認
+    const refreshEmpNo = resolvedEmployeeNo;
     if (gasClient && typeof gasClient.lookupEmployee === "function") {
-      gasClient.lookupEmployee(resolvedEmployeeNo).then(res => {
+      gasClient.lookupEmployee(refreshEmpNo).then(res => {
         if (res && res.success && res.preference) {
-          const cachedPref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
+          const cachedPref = TerminalStorage.getEmployeePreferences(refreshEmpNo);
           const serverRev = typeof res.preference.preferenceRevision === "number"
             ? res.preference.preferenceRevision
             : (typeof res.preference.revision === "number" ? res.preference.revision : 0);
           if (!cachedPref.exists || cachedPref.revision !== serverRev) {
-            TerminalStorage.saveEmployeePreferences(resolvedEmployeeNo, res.preference);
-            const activePref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
-            window.ACTIVE_ITEMS = applyMaterialCategoryFilter(window.ACTIVE_ALL_ITEMS || [], activePref.categories);
-            renderSettingsView();
-            initFixedItemsList();
+            TerminalStorage.saveEmployeePreferences(refreshEmpNo, res.preference);
+            // 現在も同じ社員が選択されている場合のみ UI へ反映
+            if (resolvedEmployeeNo === refreshEmpNo) {
+              const activePref = TerminalStorage.getEmployeePreferences(refreshEmpNo);
+              window.ACTIVE_ITEMS = applyMaterialCategoryFilter(window.ACTIVE_ALL_ITEMS || [], activePref.categories);
+              renderSettingsView();
+              initFixedItemsList();
+              applyEmployeeDefaultVendorToForm();
+            }
           }
         }
       }).catch(err => {
@@ -492,6 +502,7 @@ function initUserSettings() {
     assignedEmployeeBaseName = "";
     updateWorkingBaseState("", "", false);
     showEmployeeUnconfiguredBanner();
+    applyEmployeeDefaultVendorToForm();
   }
 }
 
@@ -673,10 +684,267 @@ function hasActiveTransactionData() {
   return Boolean(hasVendor || hasCodeItems || hasFixedItems || hasOtherItems || hasSignature || hasPendingFinalize);
 }
 
+// 社員単位 defaultVendorName 取得ヘルパー
+function getCurrentEmployeeDefaultVendor() {
+  if (!resolvedEmployeeNo) return "";
+  const pref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
+  return (pref && pref.defaultVendorName) ? pref.defaultVendorName.trim() : "";
+}
+
+// 伝票入力画面への既定業者名自動入力
+function applyEmployeeDefaultVendorToForm(options = {}) {
+  const force = options && options.force === true;
+  const vendorInput = document.getElementById("vendor-name-input");
+  if (!vendorInput) return;
+
+  // 1. 再開中・編集中Draftがある場合はDraftの値を最優先（Draft再開時はforceであっても上書き禁止）
+  if (currentResumedDraftId) {
+    return;
+  }
+
+  const isUserEdited = vendorInput.dataset ? vendorInput.dataset.userEdited === "true" : false;
+  const currentVal = vendorInput.value ? vendorInput.value.trim() : "";
+  const lastApplied = (vendorInput.dataset && vendorInput.dataset.lastAppliedVendor) || "";
+
+  // 2. forceでない場合、既にユーザーが手動で独自に入力した値があれば上書きしない
+  // (自動適用された値のまま、または空欄の場合は最新の既定値へ更新可能)
+  if (!force && isUserEdited && currentVal !== "" && currentVal !== lastApplied) {
+    return;
+  }
+
+  // 3. 社員番号が設定されている場合、その社員の defaultVendorName を適用
+  if (resolvedEmployeeNo) {
+    const defaultVendor = getCurrentEmployeeDefaultVendor();
+    vendorInput.value = defaultVendor;
+    if (vendorInput.dataset) {
+      vendorInput.dataset.lastAppliedVendor = defaultVendor;
+      vendorInput.dataset.userEdited = "false";
+    }
+    return;
+  }
+
+  // 4. 社員未設定時の legacy fallback: PREVIOUS_INPUT.vendorName (社員番号設定済みの場合は絶対に使用しない)
+  if (!resolvedEmployeeNo && !force) {
+    if (!isUserEdited || currentVal === "" || currentVal === lastApplied) {
+      const prev = TerminalStorage.getPreviousInput();
+      const prevVendor = (prev && prev.vendorName) ? prev.vendorName.trim() : "";
+      vendorInput.value = prevVendor;
+      if (vendorInput.dataset) {
+        vendorInput.dataset.lastAppliedVendor = prevVendor;
+        vendorInput.dataset.userEdited = "false";
+      }
+    }
+  } else if (!resolvedEmployeeNo && force) {
+    vendorInput.value = "";
+    if (vendorInput.dataset) {
+      vendorInput.dataset.lastAppliedVendor = "";
+      vendorInput.dataset.userEdited = "false";
+    }
+  }
+}
+
+// サーバー同期済み vendorName キャッシュ (社員番号単位) & リクエスト順序追跡
+const _lastSyncedServerVendor = {};
+const _lastConfirmedVendor = {};
+const _inFlightVendorSave = {};
+let _vendorSaveSeq = 0;
+
+// 業者名入力変更・フォーカスアウト時の社員Preference保存 (非ブロッキング)
+async function handleVendorInputChange() {
+  const vendorInput = document.getElementById("vendor-name-input");
+  if (!vendorInput) return;
+  const newVendor = vendorInput.value.trim();
+  vendorInput.value = newVendor;
+
+  // 再開中下書き編集中は社員Preferenceの自動上書きを禁止（下書き固有データを保護）
+  if (currentResumedDraftId) {
+    return;
+  }
+
+  // 保存開始時の社員番号をクロージャに固定 (非同期待機中の社員切替による混入を完全防止)
+  const targetEmpNo = resolvedEmployeeNo;
+  if (!targetEmpNo) {
+    // 社員未設定時のみ legacy PREVIOUS_INPUT にフォールバック保存
+    TerminalStorage.savePreviousInput({ vendorName: newVendor });
+    return;
+  }
+
+  // 既に同一社員・同一業者名のリクエストが送信中であれば重複送信を抑止 (change と blur の連続発火対策)
+  if (_inFlightVendorSave[targetEmpNo] === newVendor) {
+    return;
+  }
+
+  // 社員設定済み時:
+  const currentPref = TerminalStorage.getEmployeePreferences(targetEmpNo);
+  const currentVendor = (currentPref && currentPref.defaultVendorName) ? currentPref.defaultVendorName.trim() : "";
+
+  // 確定値の追跡: キャッシュにあればそれを使用、なければcurrentPrefから
+  if (_lastConfirmedVendor[targetEmpNo] === undefined) {
+    _lastConfirmedVendor[targetEmpNo] = currentVendor;
+  }
+  const fallbackConfirmedVendor = _lastConfirmedVendor[targetEmpNo];
+  const previousRevision = (currentPref && typeof currentPref.revision === "number") ? currentPref.revision : 0;
+
+  // 既にこの社員のサーバー保存が完了しており値も一致している場合は中央保存をスキップ
+  if (newVendor === currentVendor && _lastSyncedServerVendor[targetEmpNo] === newVendor) {
+    return;
+  }
+
+  // 楽観的ローカル更新: サーバー待機中の伝票確定や画面遷移でも新しい業者名が即時反映されるようにする
+  TerminalStorage.saveEmployeePreferences(targetEmpNo, {
+    defaultVendorName: newVendor
+  });
+  if (vendorInput.dataset) {
+    vendorInput.dataset.lastAppliedVendor = newVendor;
+  }
+
+  const currentSeq = ++_vendorSaveSeq;
+  _inFlightVendorSave[targetEmpNo] = newVendor;
+
+  // 中央 GAS Backend へ非同期保存 (非ブロッキング)
+  if (gasClient && typeof gasClient.saveEmployeePreferences === "function") {
+    try {
+      const expectedRev = (currentPref && typeof currentPref.revision === "number") ? currentPref.revision : null;
+      const res = await gasClient.saveEmployeePreferences(
+        targetEmpNo,
+        { defaultVendorName: newVendor },
+        expectedRev
+      );
+      if (currentSeq !== _vendorSaveSeq) return; // 遅延・旧リクエストの応答は破棄
+      if (res && res.success) {
+        const confirmedVendor = (res.defaultVendorName !== undefined) ? res.defaultVendorName : newVendor;
+        _lastSyncedServerVendor[targetEmpNo] = confirmedVendor;
+        _lastConfirmedVendor[targetEmpNo] = confirmedVendor;
+        delete _inFlightVendorSave[targetEmpNo];
+        TerminalStorage.saveEmployeePreferences(targetEmpNo, {
+          defaultVendorName: confirmedVendor,
+          revision: res.preferenceRevision,
+          updatedAt: res.updatedAt
+        });
+        // ユーザーが手動編集を継続しておらず、かつ現在も同じ社員で下書き再開中でない場合のみ画面反映
+        if (resolvedEmployeeNo === targetEmpNo && !currentResumedDraftId) {
+          if (vendorInput.dataset && (vendorInput.dataset.userEdited !== "true" || vendorInput.value === newVendor)) {
+            vendorInput.value = confirmedVendor;
+            vendorInput.dataset.lastAppliedVendor = confirmedVendor;
+          }
+        }
+      } else if (res && res.error === "PREFERENCE_REVISION_CONFLICT") {
+        console.warn("[app.js] Preference revision conflict when saving vendor, fetching latest...");
+        const latestRes = await gasClient.lookupEmployee(targetEmpNo);
+        if (currentSeq !== _vendorSaveSeq) return;
+        if (latestRes && latestRes.success && latestRes.preference) {
+          TerminalStorage.saveEmployeePreferences(targetEmpNo, latestRes.preference);
+          const newExpected = latestRes.preference.preferenceRevision;
+          const retryRes = await gasClient.saveEmployeePreferences(
+            targetEmpNo,
+            { defaultVendorName: newVendor },
+            newExpected
+          );
+          if (currentSeq !== _vendorSaveSeq) return;
+          if (retryRes && retryRes.success) {
+            const confirmedVendor = (retryRes.defaultVendorName !== undefined) ? retryRes.defaultVendorName : newVendor;
+            _lastSyncedServerVendor[targetEmpNo] = confirmedVendor;
+            _lastConfirmedVendor[targetEmpNo] = confirmedVendor;
+            delete _inFlightVendorSave[targetEmpNo];
+            TerminalStorage.saveEmployeePreferences(targetEmpNo, {
+              defaultVendorName: confirmedVendor,
+              revision: retryRes.preferenceRevision,
+              updatedAt: retryRes.updatedAt
+            });
+            if (resolvedEmployeeNo === targetEmpNo && !currentResumedDraftId) {
+              if (vendorInput.dataset && (vendorInput.dataset.userEdited !== "true" || vendorInput.value === newVendor)) {
+                vendorInput.value = confirmedVendor;
+                vendorInput.dataset.lastAppliedVendor = confirmedVendor;
+              }
+            }
+          } else {
+            console.warn("[app.js] Retry saving vendor preference failed:", retryRes);
+            delete _inFlightVendorSave[targetEmpNo];
+            TerminalStorage.saveEmployeePreferences(targetEmpNo, {
+              defaultVendorName: fallbackConfirmedVendor,
+              revision: previousRevision
+            });
+            showAppModal({
+              title: "既定業者名 保存エラー",
+              message: "設定競合後の再試行に失敗しました。サーバーに同期されていません。"
+            });
+          }
+        } else {
+          // lookupEmployee 失敗時
+          console.warn("[app.js] Failed to lookup employee after preference revision conflict:", latestRes);
+          delete _inFlightVendorSave[targetEmpNo];
+          TerminalStorage.saveEmployeePreferences(targetEmpNo, {
+            defaultVendorName: fallbackConfirmedVendor,
+            revision: previousRevision
+          });
+          showAppModal({
+            title: "設定競合エラー",
+            message: "最新設定の取得に失敗しました。サーバーに同期されていません。\n通信状態を確認の上、再度お試しください。"
+          });
+        }
+      } else {
+        console.warn("[app.js] Failed to save vendor preference to server:", res);
+        delete _inFlightVendorSave[targetEmpNo];
+        TerminalStorage.saveEmployeePreferences(targetEmpNo, {
+          defaultVendorName: fallbackConfirmedVendor,
+          revision: previousRevision
+        });
+        showAppModal({
+          title: "既定業者名 保存エラー",
+          message: "引取業者名の既定値保存に失敗しました。サーバーに同期されていません。\n通信状態を確認の上、再度お試しください。"
+        });
+      }
+    } catch (e) {
+      if (currentSeq !== _vendorSaveSeq) return;
+      console.warn("[app.js] Failed to save vendor preference to server (non-blocking):", e);
+      delete _inFlightVendorSave[targetEmpNo];
+      TerminalStorage.saveEmployeePreferences(targetEmpNo, {
+        defaultVendorName: fallbackConfirmedVendor,
+        revision: previousRevision
+      });
+      showAppModal({
+        title: "通信エラー",
+        message: "引取業者名の既定値保存に失敗しました。サーバーに同期されていません。\n通信状態を確認の上、再度お試しください。"
+      });
+    }
+  } else {
+    // gasClient 未初期化 / 単体テスト環境等: ローカルキャッシュを更新
+    TerminalStorage.saveEmployeePreferences(targetEmpNo, {
+      defaultVendorName: newVendor
+    });
+    _lastSyncedServerVendor[targetEmpNo] = newVendor;
+    _lastConfirmedVendor[targetEmpNo] = newVendor;
+  }
+}
+
+function initVendorInputHandlers() {
+  const vendorInput = document.getElementById("vendor-name-input");
+  if (!vendorInput) return;
+  if (vendorInput._vendorHandlerAttached) return;
+  vendorInput._vendorHandlerAttached = true;
+
+  vendorInput.addEventListener("input", () => {
+    if (vendorInput.dataset) vendorInput.dataset.userEdited = "true";
+  });
+  vendorInput.addEventListener("change", () => {
+    if (vendorInput.dataset) vendorInput.dataset.userEdited = "true";
+    handleVendorInputChange();
+  });
+  vendorInput.addEventListener("blur", () => {
+    handleVendorInputChange();
+  });
+
+  applyEmployeeDefaultVendorToForm();
+}
+
 // 取引単位データクリア (社員設定・Working Base は維持)
 function clearTransactionData() {
   const vendorInput = document.getElementById("vendor-name-input");
-  if (vendorInput) vendorInput.value = "";
+  if (vendorInput) vendorInput.value = getCurrentEmployeeDefaultVendor();
+  if (vendorInput && vendorInput.dataset) {
+    vendorInput.dataset.lastAppliedVendor = vendorInput.value;
+    vendorInput.dataset.userEdited = "false";
+  }
 
   currentCodeItems = [];
   currentOtherItems = [];
@@ -845,9 +1113,16 @@ function initPreviousInputs() {
     const staffInput = document.getElementById("staff-name-input");
     if (staffInput) staffInput.value = prev.staffName;
   }
-  if (prev.vendorName) {
+  // 社員未設定時のみ legacy fallback として prev.vendorName を適用 (社員設定済みの漏洩を完全防止)
+  if (!resolvedEmployeeNo && prev.vendorName) {
     const vendorInput = document.getElementById("vendor-name-input");
-    if (vendorInput) vendorInput.value = prev.vendorName;
+    if (vendorInput) {
+      vendorInput.value = prev.vendorName;
+      if (vendorInput.dataset) {
+        vendorInput.dataset.lastAppliedVendor = prev.vendorName;
+        vendorInput.dataset.userEdited = "false";
+      }
+    }
   }
 }
 
@@ -908,13 +1183,20 @@ function verifyAndSaveEmployee() {
         return;
       }
 
-      resolvedEmployeeNo = emp.employeeNo || emp.empNo || empNo;
+      const prevEmpNo = resolvedEmployeeNo;
+      const newEmpNo = emp.employeeNo || emp.empNo || empNo;
+      const isEmployeeChanged = Boolean(String(prevEmpNo || "").trim().toUpperCase() !== String(newEmpNo || "").trim().toUpperCase());
+
+      resolvedEmployeeNo = newEmpNo;
       resolvedEmployeeName = emp.employeeName;
       assignedEmployeeBaseCode = bCode;
       assignedEmployeeBaseName = bName;
 
-      // 社員変更に伴い前社員のセッション Working Base を破棄
-      TerminalStorage.clearSessionWorkingBase();
+      // 社員変更に伴い前社員のセッション Working Base を破棄し、非同期保存の応答を無効化 (同一社員の再確認時は破棄しない)
+      if (isEmployeeChanged) {
+        TerminalStorage.clearSessionWorkingBase();
+        _vendorSaveSeq++;
+      }
 
       if (assignedEmployeeBaseCode) {
         updateWorkingBaseState(assignedEmployeeBaseCode, assignedEmployeeBaseName, false);
@@ -959,6 +1241,7 @@ function verifyAndSaveEmployee() {
       // 伝票入力へ即時反映
       applyEmployeeLockToForm();
       hideEmployeeUnconfiguredBanner();
+      applyEmployeeDefaultVendorToForm({ force: isEmployeeChanged });
 
       if (typeof setDiagnosticStage === "function") {
         setDiagnosticStage("UI_UPDATED");
@@ -1751,6 +2034,9 @@ function handleFinalizeButton() {
     return;
   }
 
+  // 確定処理開始時に引取業者名変更を社員Preferenceへ非同期保存 (非ブロッキング)
+  handleVendorInputChange();
+
   const fixedItems = collectFixedItems();
   const itemsVal = Validator.validateSlipItems(currentCodeItems, fixedItems, currentOtherItems);
   if (!itemsVal.valid) {
@@ -2034,8 +2320,13 @@ function resetInputFormAfterSubmission() {
   confirmedSignatureData = null;
   pendingFinalizeSlip = null;
 
+  // 伝票完了後: 資材・数量・署名はクリアするが、引取業者名は現在社員の defaultVendorName へ復元
   const vendorInput = document.getElementById("vendor-name-input");
-  if (vendorInput) vendorInput.value = "";
+  if (vendorInput) vendorInput.value = getCurrentEmployeeDefaultVendor();
+  if (vendorInput && vendorInput.dataset) {
+    vendorInput.dataset.lastAppliedVendor = vendorInput.value;
+    vendorInput.dataset.userEdited = "false";
+  }
 
   // 入力中フィールドのクリア
   const itemCodeInput = document.getElementById("item-code-input");
@@ -2232,6 +2523,7 @@ function resumeDraftSlip(slipId) {
       const s = res.slip;
       currentResumedDraftId = s.slipNo || s.slipId || s.scrapId || slipId;
       currentResumedDraftDate = s.date || null;
+      _vendorSaveSeq++; // 下書き再開に伴い待機中の既定業者名非同期保存応答による画面上書きを無効化
 
       // P10 Fix: 署名状態の完全初期化 (前伝票の確定署名データ残存・リーク防止)
       confirmedSignatureData = null;
@@ -2817,7 +3109,7 @@ function renderHistoryRows(tbody, slips) {
 
   // 5. 行の描画 (7列契約: 伝票番号 17%, 処分日 14%, 担当者 13%, 業者名 16%, 署名区分 16%, 状態 8%, 操作 16%)
   visibleSlips.forEach((s) => {
-    const displayDate = formatJstDateTime(s.date || s.createdAt);
+    const displayDate = formatJstDate(s.date || s.createdAt);
     const slipNo = s.slipNo || s.slipId || "";
     const staffName = s.staffName || "-";
     const sigBadge = s.signatureStatus === "DIGITAL"
@@ -3774,57 +4066,60 @@ function saveCategoryPreferences() {
   const allItems = window.ACTIVE_ALL_ITEMS || (cachedMasters && (cachedMasters.allItems || cachedMasters.items)) || [];
 
   if (resolvedEmployeeNo) {
-    const currentPref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
+    const targetEmpNo = resolvedEmployeeNo;
+    const currentPref = TerminalStorage.getEmployeePreferences(targetEmpNo);
     const expectedRev = currentPref.exists ? currentPref.revision : 0;
 
-    return gasClient.saveEmployeePreferences(resolvedEmployeeNo, { selectedMaterialCategories: checked }, expectedRev).then(res => {
+    return gasClient.saveEmployeePreferences(targetEmpNo, { selectedMaterialCategories: checked }, expectedRev).then(res => {
       if (saveBtn) {
         saveBtn.textContent = origBtnText;
         saveBtn.disabled = false;
       }
       if (res && res.success) {
-        // 中央保存成功時のみローカルキャッシュ確定 & UI確定 (定型品設定を維持)
-        TerminalStorage.saveEmployeePreferences(resolvedEmployeeNo, {
+        // 中央保存成功時のみローカルキャッシュ確定 & UI確定 (定型品・既定業者名設定を自動マージで維持)
+        TerminalStorage.saveEmployeePreferences(targetEmpNo, {
           exists: true,
           categories: checked,
-          fixedItemIds: currentPref.fixedItemIds,
           revision: res.preferenceRevision,
           updatedAt: res.updatedAt
         });
 
-        window.ACTIVE_ITEMS = applyMaterialCategoryFilter(allItems, checked);
-        if (cachedMasters) {
-          TerminalStorage.saveMasterCache({
-            bases: cachedMasters.bases,
-            allItems: allItems,
-            items: window.ACTIVE_ITEMS,
-            fixedItems: cachedMasters.fixedItems,
-            categories: cachedMasters.categories
-          }, cachedMasters.masterRevision || 1);
+        if (resolvedEmployeeNo === targetEmpNo) {
+          window.ACTIVE_ITEMS = applyMaterialCategoryFilter(allItems, checked);
+          if (cachedMasters) {
+            TerminalStorage.saveMasterCache({
+              bases: cachedMasters.bases,
+              allItems: allItems,
+              items: window.ACTIVE_ITEMS,
+              fixedItems: cachedMasters.fixedItems,
+              categories: cachedMasters.categories
+            }, cachedMasters.masterRevision || 1);
+          }
+          showAppModal({ title: "設定保存", message: "使用資材カテゴリを更新しました。" });
         }
-
-        showAppModal({ title: "設定保存", message: "使用資材カテゴリを更新しました。" });
       } else if (res && res.error === "PREFERENCE_REVISION_CONFLICT") {
         showAppModal({
           title: "設定競合",
           message: "別の端末で設定が更新されています。最新設定を再取得します。"
         });
         // 最新設定を再取得して再描画
-        return gasClient.lookupEmployee(resolvedEmployeeNo).then(latestRes => {
+        return gasClient.lookupEmployee(targetEmpNo).then(latestRes => {
           if (latestRes && latestRes.preference) {
-            TerminalStorage.saveEmployeePreferences(resolvedEmployeeNo, latestRes.preference);
-            renderSettingsView();
-            initFixedItemsList();
-            const activePref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
-            window.ACTIVE_ITEMS = applyMaterialCategoryFilter(allItems, activePref.categories);
-            if (cachedMasters) {
-              TerminalStorage.saveMasterCache({
-                bases: cachedMasters.bases,
-                allItems: allItems,
-                items: window.ACTIVE_ITEMS,
-                fixedItems: cachedMasters.fixedItems,
-                categories: cachedMasters.categories
-              }, cachedMasters.masterRevision || 1);
+            TerminalStorage.saveEmployeePreferences(targetEmpNo, latestRes.preference);
+            if (resolvedEmployeeNo === targetEmpNo) {
+              renderSettingsView();
+              initFixedItemsList();
+              const activePref = TerminalStorage.getEmployeePreferences(targetEmpNo);
+              window.ACTIVE_ITEMS = applyMaterialCategoryFilter(allItems, activePref.categories);
+              if (cachedMasters) {
+                TerminalStorage.saveMasterCache({
+                  bases: cachedMasters.bases,
+                  allItems: allItems,
+                  items: window.ACTIVE_ITEMS,
+                  fixedItems: cachedMasters.fixedItems,
+                  categories: cachedMasters.categories
+                }, cachedMasters.masterRevision || 1);
+              }
             }
           }
         });
@@ -3882,41 +4177,45 @@ function saveFixedItemPreferences() {
     : [];
 
   if (resolvedEmployeeNo) {
-    const currentPref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
+    const targetEmpNo = resolvedEmployeeNo;
+    const currentPref = TerminalStorage.getEmployeePreferences(targetEmpNo);
     const expectedRev = currentPref.exists ? currentPref.revision : 0;
 
-    return gasClient.saveEmployeePreferences(resolvedEmployeeNo, { selectedFixedItemIds: checked }, expectedRev).then(res => {
+    return gasClient.saveEmployeePreferences(targetEmpNo, { selectedFixedItemIds: checked }, expectedRev).then(res => {
       if (saveBtn) {
         saveBtn.textContent = origBtnText;
         saveBtn.disabled = false;
       }
       if (res && res.success) {
-        // 中央保存成功時のみローカルキャッシュ確定 & UI確定 (カテゴリ設定を維持)
-        TerminalStorage.saveEmployeePreferences(resolvedEmployeeNo, {
+        // 中央保存成功時のみローカルキャッシュ確定 & UI確定 (カテゴリ・既定業者名設定を自動マージで維持)
+        TerminalStorage.saveEmployeePreferences(targetEmpNo, {
           exists: true,
-          categories: currentPref.categories,
           fixedItemIds: checked,
           revision: res.preferenceRevision,
           updatedAt: res.updatedAt
         });
 
-        initFixedItemsList();
-        showAppModal({ title: "設定保存", message: "使用定型品設定を更新しました。" });
+        if (resolvedEmployeeNo === targetEmpNo) {
+          initFixedItemsList();
+          showAppModal({ title: "設定保存", message: "使用定型品設定を更新しました。" });
+        }
       } else if (res && res.error === "PREFERENCE_REVISION_CONFLICT") {
         showAppModal({
           title: "設定競合",
           message: "別の端末で設定が更新されています。最新設定を再取得します。"
         });
         // 最新設定を再取得して再描画
-        return gasClient.lookupEmployee(resolvedEmployeeNo).then(latestRes => {
+        return gasClient.lookupEmployee(targetEmpNo).then(latestRes => {
           if (latestRes && latestRes.preference) {
-            TerminalStorage.saveEmployeePreferences(resolvedEmployeeNo, latestRes.preference);
-            renderSettingsView();
-            initFixedItemsList();
-            const cachedMasters = TerminalStorage.getMasterCache();
-            const allItems = window.ACTIVE_ALL_ITEMS || (cachedMasters && (cachedMasters.allItems || cachedMasters.items)) || [];
-            const activePref = TerminalStorage.getEmployeePreferences(resolvedEmployeeNo);
-            window.ACTIVE_ITEMS = applyMaterialCategoryFilter(allItems, activePref.categories);
+            TerminalStorage.saveEmployeePreferences(targetEmpNo, latestRes.preference);
+            if (resolvedEmployeeNo === targetEmpNo) {
+              renderSettingsView();
+              initFixedItemsList();
+              const cachedMasters = TerminalStorage.getMasterCache();
+              const allItems = window.ACTIVE_ALL_ITEMS || (cachedMasters && (cachedMasters.allItems || cachedMasters.items)) || [];
+              const activePref = TerminalStorage.getEmployeePreferences(targetEmpNo);
+              window.ACTIVE_ITEMS = applyMaterialCategoryFilter(allItems, activePref.categories);
+            }
           }
         });
       } else {
@@ -4084,11 +4383,16 @@ if (typeof module !== "undefined" && module.exports) {
     resumeDraftSlip,
     executeDeleteDraft,
     getCurrentResumedDraftId: () => currentResumedDraftId,
-    setCurrentResumedDraftId: (id) => { currentResumedDraftId = id; },
+    setCurrentResumedDraftId: (id) => { currentResumedDraftId = id; if (id) _vendorSaveSeq++; },
     getGasClientInstance: () => gasClient,
     setGasClientInstance: (c) => { gasClient = c; },
     setSubmissionBusy,
     setFinalizeButtonsDisabled,
+    // Hotfix 02: Employee Vendor Preference
+    getCurrentEmployeeDefaultVendor,
+    applyEmployeeDefaultVendorToForm,
+    handleVendorInputChange,
+    initVendorInputHandlers,
     // P11 History & Search
     getHistoryBusinessDate,
     normalizeHistorySearchText,
@@ -4141,9 +4445,15 @@ if (typeof window !== "undefined") {
   window.resumeDraftSlip = resumeDraftSlip;
   window.executeDeleteDraft = executeDeleteDraft;
   window.getCurrentResumedDraftId = () => currentResumedDraftId;
-  window.setCurrentResumedDraftId = (id) => { currentResumedDraftId = id; };
+  window.setCurrentResumedDraftId = (id) => { currentResumedDraftId = id; if (id) _vendorSaveSeq++; };
   window.setSubmissionBusy = setSubmissionBusy;
   window.setFinalizeButtonsDisabled = setFinalizeButtonsDisabled;
+
+  // Hotfix 02: Employee Vendor Preference
+  window.getCurrentEmployeeDefaultVendor = getCurrentEmployeeDefaultVendor;
+  window.applyEmployeeDefaultVendorToForm = applyEmployeeDefaultVendorToForm;
+  window.handleVendorInputChange = handleVendorInputChange;
+  window.initVendorInputHandlers = initVendorInputHandlers;
 
   // P11 History & Search & UI Fix
   window.toCanonicalBusinessDate = toCanonicalBusinessDate;

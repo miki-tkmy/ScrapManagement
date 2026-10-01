@@ -218,6 +218,7 @@ function normalizeEmployeePreference(pref) {
       exists: false,
       categories: DEFAULT_29_CATEGORIES.slice(),
       fixedItemIds: null,
+      defaultVendorName: "",
       revision: 0,
       updatedAt: null
     };
@@ -239,16 +240,24 @@ function normalizeEmployeePreference(pref) {
     rawFixed = pref.selectedFixedItemIds;
   }
 
+  // defaultVendorName 抽出: pref.defaultVendorName または pref.vendorName
+  let rawVendor = "";
+  if (pref.defaultVendorName !== undefined && pref.defaultVendorName !== null) {
+    rawVendor = String(pref.defaultVendorName).trim();
+  } else if (pref.vendorName !== undefined && pref.vendorName !== null) {
+    rawVendor = String(pref.vendorName).trim();
+  }
+
   // exists 判定:
   // 1. 明示的に exists === true の場合は存在
   // 2. 明示的に exists === false の場合は不存在
-  // 3. exists が未定義だが categories または fixedItemIds が与えられている場合は存在 (内部 Canonical 互換)
+  // 3. exists が未定義だが categories, fixedItemIds, または defaultVendorName が与えられている場合は存在 (内部 Canonical 互換)
   let exists = false;
   if (pref.exists === true) {
     exists = true;
   } else if (pref.exists === false) {
     exists = false;
-  } else if (rawCats !== null || rawFixed !== undefined) {
+  } else if (rawCats !== null || rawFixed !== undefined || rawVendor !== "") {
     exists = true;
   }
 
@@ -266,6 +275,7 @@ function normalizeEmployeePreference(pref) {
       exists: false,
       categories: DEFAULT_29_CATEGORIES.slice(),
       fixedItemIds: null,
+      defaultVendorName: "",
       revision: rev,
       updatedAt: updatedAt
     };
@@ -288,6 +298,7 @@ function normalizeEmployeePreference(pref) {
     exists: true,
     categories: categories,
     fixedItemIds: fixedItemIds,
+    defaultVendorName: rawVendor,
     revision: rev,
     updatedAt: updatedAt
   };
@@ -299,6 +310,7 @@ function getEmployeePreferences(empNo) {
       exists: false,
       categories: DEFAULT_29_CATEGORIES.slice(),
       fixedItemIds: null,
+      defaultVendorName: "",
       revision: 0,
       updatedAt: null,
       cachedAt: null
@@ -313,6 +325,7 @@ function getEmployeePreferences(empNo) {
       exists: normalized.exists,
       categories: normalized.categories,
       fixedItemIds: normalized.fixedItemIds,
+      defaultVendorName: normalized.defaultVendorName,
       revision: normalized.revision,
       updatedAt: normalized.updatedAt,
       cachedAt: rec.cachedAt || null
@@ -322,6 +335,7 @@ function getEmployeePreferences(empNo) {
     exists: false,
     categories: DEFAULT_29_CATEGORIES.slice(),
     fixedItemIds: null,
+    defaultVendorName: "",
     revision: 0,
     updatedAt: null,
     cachedAt: null
@@ -343,6 +357,21 @@ function saveEmployeePreferences(empNo, pref) {
     if (prefToNormalize.fixedItemIds === undefined && prefToNormalize.selectedFixedItemIds === undefined && existing.fixedItemIds !== undefined) {
       prefToNormalize.fixedItemIds = existing.fixedItemIds;
     }
+    if (prefToNormalize.defaultVendorName === undefined && prefToNormalize.vendorName === undefined && existing.defaultVendorName !== undefined) {
+      prefToNormalize.defaultVendorName = existing.defaultVendorName;
+    }
+    const incomingRev = (typeof prefToNormalize.revision === "number")
+      ? prefToNormalize.revision
+      : (typeof prefToNormalize.preferenceRevision === "number" ? prefToNormalize.preferenceRevision : undefined);
+    if (incomingRev === undefined && existing.revision !== undefined) {
+      prefToNormalize.revision = existing.revision;
+    } else if (incomingRev !== undefined && typeof existing.revision === "number" && existing.revision > incomingRev) {
+      // 既存リビジョンのほうが新しい場合はリビジョンの巻き戻りを防止
+      prefToNormalize.revision = existing.revision;
+    }
+    if (prefToNormalize.updatedAt === undefined && existing.updatedAt !== undefined) {
+      prefToNormalize.updatedAt = existing.updatedAt;
+    }
   }
 
   const normalized = normalizeEmployeePreference(prefToNormalize);
@@ -351,6 +380,7 @@ function saveEmployeePreferences(empNo, pref) {
     exists: normalized.exists,
     categories: normalized.categories,
     fixedItemIds: normalized.fixedItemIds,
+    defaultVendorName: normalized.defaultVendorName,
     revision: normalized.revision,
     updatedAt: normalized.updatedAt,
     cachedAt: new Date().toISOString()

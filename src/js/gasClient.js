@@ -7,7 +7,7 @@
 // - 中央履歴 (fetchHistory), 伝票詳細 (fetchSlip), 中央集計 (fetchSummary), 社員照会 (lookupEmployee)
 // ========================================================================================
 
-const SCRAP_FRONTEND_BUILD_ID = "OPERATION-HOTFIX-20260930-01";
+const SCRAP_FRONTEND_BUILD_ID = "OPERATION-HOTFIX-20260930-02";
 if (typeof window !== "undefined") {
   window.SCRAP_FRONTEND_BUILD_ID = SCRAP_FRONTEND_BUILD_ID;
 }
@@ -366,6 +366,7 @@ class GasClient {
           exists: mockPref.exists,
           selectedMaterialCategories: (mockPref.selectedMaterialCategories || []).slice(),
           selectedFixedItemIds: mockPref.selectedFixedItemIds !== undefined ? mockPref.selectedFixedItemIds : null,
+          defaultVendorName: mockPref.defaultVendorName || "",
           preferenceRevision: mockPref.preferenceRevision || 0,
           updatedAt: mockPref.updatedAt || null
         }
@@ -1063,12 +1064,13 @@ class GasClient {
 
     let cats = undefined;
     let fixedIds = undefined;
+    let vendor = undefined;
 
     if (Array.isArray(categoriesOrPayload)) {
       // Legacy / Category-only call signature: (empNo, checkedCats, expectedRev)
       cats = categoriesOrPayload;
     } else if (categoriesOrPayload && typeof categoriesOrPayload === "object") {
-      // Extended call signature: (empNo, { selectedMaterialCategories, selectedFixedItemIds }, expectedRev)
+      // Extended call signature: (empNo, { selectedMaterialCategories, selectedFixedItemIds, defaultVendorName }, expectedRev)
       if (categoriesOrPayload.selectedMaterialCategories !== undefined) {
         cats = categoriesOrPayload.selectedMaterialCategories;
       } else if (categoriesOrPayload.categories !== undefined) {
@@ -1079,6 +1081,12 @@ class GasClient {
         fixedIds = categoriesOrPayload.selectedFixedItemIds;
       } else if (categoriesOrPayload.fixedItemIds !== undefined) {
         fixedIds = categoriesOrPayload.fixedItemIds;
+      }
+
+      if (categoriesOrPayload.defaultVendorName !== undefined) {
+        vendor = categoriesOrPayload.defaultVendorName;
+      } else if (categoriesOrPayload.vendorName !== undefined) {
+        vendor = categoriesOrPayload.vendorName;
       }
     }
 
@@ -1092,6 +1100,9 @@ class GasClient {
     if (fixedIds !== undefined) {
       reqPayload.selectedFixedItemIds = fixedIds;
     }
+    if (vendor !== undefined) {
+      reqPayload.defaultVendorName = String(vendor || "").trim();
+    }
 
     if (this.isMockMode) {
       if (!this._mockPreferences) this._mockPreferences = {};
@@ -1103,6 +1114,7 @@ class GasClient {
           "SA", "SS", "UA", "UG", "VM", "YT", "YU", "ZZ", "__UNGROUPED__"
         ],
         selectedFixedItemIds: null,
+        defaultVendorName: "",
         preferenceRevision: 0,
         updatedAt: null
       };
@@ -1132,10 +1144,16 @@ class GasClient {
         finalFixed = Array.isArray(fixedIds) ? fixedIds.slice() : (fixedIds === null ? null : null);
       }
 
+      let finalVendor = current.defaultVendorName !== undefined ? current.defaultVendorName : "";
+      if (vendor !== undefined) {
+        finalVendor = String(vendor || "").trim();
+      }
+
       this._mockPreferences[cleanEmpNo] = {
         exists: true,
         selectedMaterialCategories: finalCats,
         selectedFixedItemIds: finalFixed,
+        defaultVendorName: finalVendor,
         preferenceRevision: newRev,
         updatedAt: nowIso
       };
@@ -1147,6 +1165,7 @@ class GasClient {
         preferenceRevision: newRev,
         selectedMaterialCategories: finalCats,
         selectedFixedItemIds: finalFixed,
+        defaultVendorName: finalVendor,
         updatedAt: nowIso
       };
     }
