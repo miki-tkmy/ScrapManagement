@@ -1,7 +1,7 @@
 // アプリケーション統合コントローラー (app.js)
 // ========================================================================================
 // Runtime Asset Identity (Section E)
-const SCRAP_APP_RUNTIME_REV = "OPERATION-ENHANCEMENT-20261001-02";
+const SCRAP_APP_RUNTIME_REV = "OPERATION-ENHANCEMENT-20261001-03";
 if (typeof window !== "undefined") {
   window.SCRAP_APP_RUNTIME_REV = SCRAP_APP_RUNTIME_REV;
 }
@@ -3137,6 +3137,7 @@ function renderHistoryRows(tbody, slips) {
         </div>
         <div class="history-row-2">
           <span class="hist-staff">${escapeHtml(staffName)}</span>
+          <span class="hist-mobile-status">${statusBadge}</span>
         </div>
         <div class="history-row-3 history-row-bottom">
           <div class="hist-actions">
