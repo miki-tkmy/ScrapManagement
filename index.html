@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>ScrapManagement - スクラップ処分記録</title>
-  <link rel="stylesheet" href="src/css/style.css?v=OPERATION-HOTFIX-20260930-02">
-  <link rel="stylesheet" href="src/css/print.css?v=OPERATION-HOTFIX-20260930-02" media="print">
+  <link rel="stylesheet" href="src/css/style.css?v=OPERATION-ENHANCEMENT-20261001-01">
+  <link rel="stylesheet" href="src/css/print.css?v=OPERATION-ENHANCEMENT-20261001-01" media="print">
 </head>
 <body>
   <!-- アプリヘッダー (通常状態では環境名や会社名のバナーを表示しない) -->
@@ -58,7 +58,7 @@
           <!-- BaseCode 入力 (内部値保持用) -->
           <div class="form-group" id="base-code-group" style="display:none;">
             <label class="form-label" for="base-code-input">拠点コード <span style="color:var(--color-danger)">*</span></label>
-            <input type="text" id="base-code-input" class="form-input" placeholder="例: B01, B19" autocomplete="off" autocapitalize="characters" required>
+            <input type="text" id="base-code-input" class="form-input" placeholder="B01, B19" autocomplete="off" autocapitalize="characters" required>
             <div id="base-code-autocomplete" class="autocomplete-box"></div>
           </div>
           <!-- Working Base (入力拠点) 表示 & 変更UI -->
@@ -75,12 +75,12 @@
           <!-- 担当者名 (株式会社タカミヤ側) -->
           <div class="form-group">
             <label class="form-label" for="staff-name-input">株式会社タカミヤ 担当者名 <span style="color:var(--color-danger)">*</span></label>
-            <input type="text" id="staff-name-input" class="form-input" placeholder="例: 山田 太郎" required>
+            <input type="text" id="staff-name-input" class="form-input" placeholder="山田 太郎" required>
           </div>
           <!-- スクラップ引取業者名 -->
           <div class="form-group">
             <label class="form-label" for="vendor-name-input">スクラップ引取業者名 <span style="color:var(--color-danger)">*</span></label>
-            <input type="text" id="vendor-name-input" class="form-input" placeholder="例: ○○金属株式会社" required>
+            <input type="text" id="vendor-name-input" class="form-input" placeholder="○○金属株式会社" required>
           </div>
         </div>
       </div>
@@ -91,7 +91,7 @@
         <div class="form-grid" style="margin-bottom:0.75rem;">
           <div class="form-group" style="flex:1;">
             <label class="form-label" for="item-code-input">資材コード</label>
-            <input type="text" id="item-code-input" class="form-input" placeholder="例: P48640, IQST38, CLFX01" autocomplete="off" autocapitalize="characters">
+            <input type="text" id="item-code-input" class="form-input" placeholder="IQA3800,KCC" autocomplete="off" autocapitalize="characters">
             <div id="item-code-autocomplete" class="autocomplete-box"></div>
           </div>
           <div class="form-group" style="flex:2;">
@@ -102,7 +102,7 @@
             <label class="form-label" for="item-qty-input">数量</label>
             <div class="qty-input-group">
               <button type="button" class="btn-qty-input-step" id="btn-qty-minus" onclick="stepFormQuantity(-1)" aria-label="1減らす">－</button>
-              <input type="text" id="item-qty-input" class="form-input" placeholder="例: 10, 10+5, 10×2, 一式">
+              <input type="text" id="item-qty-input" class="form-input" placeholder="10, 10+5, 10×2, 一式">
               <button type="button" class="btn-qty-input-step" id="btn-qty-plus" onclick="stepFormQuantity(1)" aria-label="1増やす">＋</button>
             </div>
           </div>
@@ -158,11 +158,11 @@
         <div class="form-grid" style="margin-bottom:0.75rem;">
           <div class="form-group" style="flex:2;">
             <label class="form-label" for="other-name-input">品名</label>
-            <input type="text" id="other-name-input" class="form-input" placeholder="例: 簿外品、社外品">
+            <input type="text" id="other-name-input" class="form-input" placeholder="">
           </div>
           <div class="form-group" style="flex:1;">
             <label class="form-label" for="other-qty-input">数量</label>
-            <input type="text" id="other-qty-input" class="form-input" placeholder="例: 1カゴ、一式">
+            <input type="text" id="other-qty-input" class="form-input" placeholder="1カゴ、一式">
           </div>
         </div>
         <button type="button" class="btn btn-secondary" style="width:100%;" onclick="addOtherItemFromForm()">その他に追加</button>
@@ -391,7 +391,7 @@
             <div class="form-group" style="flex:1;">
               <label class="form-label" for="setting-employee-no">社員番号 <span style="color:var(--color-danger)">*</span></label>
               <div style="display:flex; gap:0.5rem;">
-                <input type="text" id="setting-employee-no" class="form-input" placeholder="例: E00001" autocomplete="off" autocapitalize="characters">
+                <input type="text" id="setting-employee-no" class="form-input" placeholder="E00001" autocomplete="off" autocapitalize="characters">
                 <button type="button" class="btn btn-primary" id="btn-verify-employee" onclick="verifyAndSaveEmployee()" style="white-space:nowrap; padding:0.4rem 0.9rem;">確認 / 保存</button>
               </div>
             </div>
@@ -435,7 +435,7 @@
           <p style="font-size:0.75rem; color:var(--color-text-muted); margin-bottom:0.6rem;">※個人情報・社員名・秘密情報は一切表示されません</p>
           <div style="font-size:0.8rem; font-family:monospace; line-height:1.6; word-break:break-all;">
             <div style="background:#fff; border:1px solid #ddd; padding:8px; margin-bottom:8px; border-radius:4px;">
-              <div><strong>HTML Build:</strong> <span id="diag-html-build">OPERATION-HOTFIX-20260930-02</span></div>
+              <div><strong>HTML Build:</strong> <span id="diag-html-build">OPERATION-ENHANCEMENT-20261001-01</span></div>
               <div><strong>App Runtime:</strong> <span id="diag-app-runtime">--</span></div>
               <div><strong>Style Runtime:</strong> <span id="diag-style-runtime">--</span></div>
               <div id="diag-asset-status" style="margin-top:4px; font-weight:bold;"></div>
@@ -458,7 +458,7 @@
         <!-- Frontend Build ID 常時表示 -->
         <div class="settings-section" style="border-top:1px solid var(--color-border); padding-top:1rem; margin-top:1rem; text-align:center;">
           <div id="frontend-build-id-display" style="font-size:0.75rem; color:var(--color-text-muted); font-family:monospace;">
-            Build: OPERATION-HOTFIX-20260930-02
+            Build: OPERATION-ENHANCEMENT-20261001-01
           </div>
         </div>
       </div>
@@ -567,6 +567,7 @@
       <!-- フッターアクション (ボタン2つに統一・端への密着解消) -->
       <div class="history-detail-actions">
         <button type="button" class="btn btn-secondary" id="btn-hist-detail-print" onclick="handleHistoryDetailPrint()">この伝票を印刷</button>
+        <button type="button" class="btn btn-danger" id="btn-hist-detail-delete" style="display:none;" onclick="handleHistoryDetailDelete()">削除</button>
         <button type="button" class="btn btn-primary" id="btn-hist-detail-close" onclick="closeHistoryDetailModal()">閉じる</button>
       </div>
     </div>
@@ -640,18 +641,18 @@
   </div>
 
   <!-- スクリプト読み込み (依存順) -->
-  <script src="src/js/config.js?v=OPERATION-HOTFIX-20260930-02"></script>
-  <script src="src/js/fixtures.js?v=OPERATION-HOTFIX-20260930-02"></script>
-  <script src="src/js/baseService.js?v=OPERATION-HOTFIX-20260930-02"></script>
-  <script src="src/js/itemService.js?v=OPERATION-HOTFIX-20260930-02"></script>
-  <script src="src/js/quantityEngine.js?v=OPERATION-HOTFIX-20260930-02"></script>
-  <script src="src/js/weightEngine.js?v=OPERATION-HOTFIX-20260930-02"></script>
-  <script src="src/js/signatureHelper.js?v=OPERATION-HOTFIX-20260930-02"></script>
-  <script src="src/js/signature.js?v=OPERATION-HOTFIX-20260930-02"></script>
-  <script src="src/js/gasClient-gate3a7-fixpref-20260927.js?v=OPERATION-HOTFIX-20260930-02"></script>
-  <script src="src/js/storage.js?v=OPERATION-HOTFIX-20260930-02"></script>
-  <script src="src/js/validator.js?v=OPERATION-HOTFIX-20260930-02"></script>
-  <script src="src/js/app.js?v=OPERATION-HOTFIX-20260930-02"></script>
+  <script src="src/js/config.js?v=OPERATION-ENHANCEMENT-20261001-01"></script>
+  <script src="src/js/fixtures.js?v=OPERATION-ENHANCEMENT-20261001-01"></script>
+  <script src="src/js/baseService.js?v=OPERATION-ENHANCEMENT-20261001-01"></script>
+  <script src="src/js/itemService.js?v=OPERATION-ENHANCEMENT-20261001-01"></script>
+  <script src="src/js/quantityEngine.js?v=OPERATION-ENHANCEMENT-20261001-01"></script>
+  <script src="src/js/weightEngine.js?v=OPERATION-ENHANCEMENT-20261001-01"></script>
+  <script src="src/js/signatureHelper.js?v=OPERATION-ENHANCEMENT-20261001-01"></script>
+  <script src="src/js/signature.js?v=OPERATION-ENHANCEMENT-20261001-01"></script>
+  <script src="src/js/gasClient-gate3a7-fixpref-20260927.js?v=OPERATION-ENHANCEMENT-20261001-01"></script>
+  <script src="src/js/storage.js?v=OPERATION-ENHANCEMENT-20261001-01"></script>
+  <script src="src/js/validator.js?v=OPERATION-ENHANCEMENT-20261001-01"></script>
+  <script src="src/js/app.js?v=OPERATION-ENHANCEMENT-20261001-01"></script>
 </body>
 </html>
 

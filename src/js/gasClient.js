@@ -7,7 +7,7 @@
 // - 中央履歴 (fetchHistory), 伝票詳細 (fetchSlip), 中央集計 (fetchSummary), 社員照会 (lookupEmployee)
 // ========================================================================================
 
-const SCRAP_FRONTEND_BUILD_ID = "OPERATION-HOTFIX-20260930-02";
+const SCRAP_FRONTEND_BUILD_ID = "OPERATION-ENHANCEMENT-20261001-01";
 if (typeof window !== "undefined") {
   window.SCRAP_FRONTEND_BUILD_ID = SCRAP_FRONTEND_BUILD_ID;
 }
@@ -553,7 +553,11 @@ class GasClient {
       const all = (this.mockSlips || []).concat(localSlips);
       const filtered = all.filter(s => {
         if (s.baseCode !== baseCode) return false;
-        if (status !== "ALL" && s.status !== status) return false;
+        if (status === "FINAL") {
+          if (s.status !== "FINAL" && s.status !== "DELETED") return false;
+        } else if (status !== "ALL" && s.status !== status) {
+          return false;
+        }
         const d = (s.createdAt || s.date || "").slice(0, 10);
         if (fromDate && d < fromDate) return false;
         if (toDate && d > toDate) return false;
@@ -649,6 +653,9 @@ class GasClient {
 
     if (this.isMockMode) {
       const found = (this.mockSlips || []).find(s => s.slipId === slipId || s.slipNo === slipId || s.scrapId === slipId);
+      if (found && found.status === "DELETED") {
+        return { success: false, mode: "MOCK", error: "SLIP_DELETED", message: "削除された伝票の署名は取得できません。" };
+      }
       if (found && found.vendorSignatureImage) {
         return { success: true, mode: "MOCK", slipNo: slipId, signatureStatus: "DIGITAL", signatureData: found.vendorSignatureImage };
       }
@@ -656,6 +663,9 @@ class GasClient {
         const raw = typeof localStorage !== "undefined" ? localStorage.getItem("scrap_confirmed_slips") : null;
         const local = raw ? JSON.parse(raw) : [];
         const lf = local.find(s => s.slipId === slipId || s.slipNo === slipId || s.scrapId === slipId);
+        if (lf && lf.status === "DELETED") {
+          return { success: false, mode: "MOCK", error: "SLIP_DELETED", message: "削除された伝票の署名は取得できません。" };
+        }
         if (lf && lf.vendorSignatureImage) {
           return { success: true, mode: "MOCK", slipNo: slipId, signatureStatus: "DIGITAL", signatureData: lf.vendorSignatureImage };
         }
@@ -699,7 +709,7 @@ class GasClient {
 
     if (this.isMockMode) {
       const hist = await this.fetchHistory({ baseCode, status: "FINAL", fromDate, toDate });
-      const slips = hist.slips || [];
+      const slips = (hist.slips || []).filter(s => s.status === "FINAL");
       const slipCountRev = (this._mockRevisions && this._mockRevisions.slipCountRevisions && this._mockRevisions.slipCountRevisions[baseCode]) || 1;
       return {
         success: true,
@@ -748,7 +758,7 @@ class GasClient {
 
     if (this.isMockMode) {
       const hist = await this.fetchHistory({ baseCode, status: "FINAL", fromDate, toDate });
-      const slips = hist.slips || [];
+      const slips = (hist.slips || []).filter(s => s.status === "FINAL");
       const itemMap = {};
       let totalWeightKg = 0;
       let totalItemsCount = 0;
@@ -1050,6 +1060,144 @@ class GasClient {
         success: false,
         mode: "GAS_STAGING",
         error: "STAGING_BACKEND_UNAVAILABLE",
+        message: e.message
+      };
+    }
+  }
+
+  // 11. 確定伝票論理削除 (POST action=delete-final-slip)
+  async deleteFinalSlip(params = {}, legacyBaseCode, legacyEmployeeNo) {
+    let slipNo, baseCode, employeeNo;
+    if (typeof params === "string") {
+      slipNo = params;
+      baseCode = legacyBaseCode;
+      employeeNo = legacyEmployeeNo || "";
+    } else {
+      slipNo = params.slipNo || params.slipId || params.scrapId;
+      baseCode = params.baseCode || legacyBaseCode;
+      employeeNo = params.employeeNo || legacyEmployeeNo || "";
+    }
+
+    if (!slipNo) {
+      return { success: false, error: "MISSING_SLIP_NO", message: "伝票番号が指定されていません。" };
+    }
+    if (!baseCode) {
+      return { success: false, error: "MISSING_BASE_CODE", message: "拠点コードが指定されていません。" };
+    }
+    if (!employeeNo) {
+      return { success: false, error: "MISSING_EMPLOYEE_NO", message: "社員番号が指定されていません。" };
+    }
+
+    const cleanSlipNo = String(slipNo).trim();
+    const cleanBaseCode = String(baseCode).trim();
+    const cleanEmployeeNo = String(employeeNo).trim();
+
+    if (this.isMockMode) {
+      const idx = (this.mockSlips || []).findIndex(s => s.slipNo === cleanSlipNo || s.slipId === cleanSlipNo || s.scrapId === cleanSlipNo);
+      let target = null;
+      let isLocal = false;
+      let localIndex = -1;
+      let localList = [];
+
+      if (idx >= 0) {
+        target = this.mockSlips[idx];
+      } else {
+        try {
+          const raw = typeof localStorage !== "undefined" ? localStorage.getItem("scrap_confirmed_slips") : null;
+          localList = raw ? JSON.parse(raw) : [];
+          localIndex = localList.findIndex(s => s.slipNo === cleanSlipNo || s.slipId === cleanSlipNo || s.scrapId === cleanSlipNo);
+          if (localIndex >= 0) {
+            target = localList[localIndex];
+            isLocal = true;
+          }
+        } catch (e) {}
+      }
+
+      if (!target) {
+        return { success: false, mode: "MOCK", error: "SLIP_NOT_FOUND", message: "伝票が見つかりません。" };
+      }
+      if (target.status === "DELETED") {
+        return { success: false, mode: "MOCK", error: "SLIP_ALREADY_DELETED", message: "既に削除されている伝票です。" };
+      }
+      if (target.status !== "FINAL") {
+        return { success: false, mode: "MOCK", error: "CANNOT_DELETE_NON_FINAL_SLIP", message: "確定済みの伝票のみ削除できます。" };
+      }
+      if (target.baseCode !== cleanBaseCode) {
+        return { success: false, mode: "MOCK", error: "FORBIDDEN", message: "他拠点の伝票は削除できません。" };
+      }
+
+      const hadDigital = (target.signStatus === "DIGITAL" || target.signatureStatus === "DIGITAL");
+      const now = new Date().toISOString();
+      target.status = "DELETED";
+      target.deletedBy = cleanEmployeeNo;
+      target.deletedAt = now;
+      target.updatedAt = now;
+      if (hadDigital) {
+        target.signStatus = "DELETED";
+        target.signatureStatus = "DELETED";
+        target.vendorSignatureImage = null;
+        target.signatureData = null;
+        target.signatureFileId = null;
+      }
+
+      if (isLocal && typeof localStorage !== "undefined") {
+        localList[localIndex] = target;
+        localStorage.setItem("scrap_confirmed_slips", JSON.stringify(localList));
+      }
+
+      if (!this._mockRevisions.historyRevisions) this._mockRevisions.historyRevisions = {};
+      if (!this._mockRevisions.historyRevisions[cleanBaseCode]) this._mockRevisions.historyRevisions[cleanBaseCode] = 1;
+      this._mockRevisions.historyRevisions[cleanBaseCode]++;
+
+      if (!this._mockRevisions.slipCountRevisions) this._mockRevisions.slipCountRevisions = {};
+      if (!this._mockRevisions.slipCountRevisions[cleanBaseCode]) this._mockRevisions.slipCountRevisions[cleanBaseCode] = 1;
+      this._mockRevisions.slipCountRevisions[cleanBaseCode]++;
+
+      if (!this._mockRevisions.summaryRevisions) this._mockRevisions.summaryRevisions = {};
+      if (!this._mockRevisions.summaryRevisions[cleanBaseCode]) this._mockRevisions.summaryRevisions[cleanBaseCode] = 1;
+      this._mockRevisions.summaryRevisions[cleanBaseCode]++;
+
+      return {
+        success: true,
+        mode: "MOCK",
+        slipNo: cleanSlipNo,
+        status: "DELETED",
+        deletedAt: now,
+        deletedBy: cleanEmployeeNo,
+        signatureDeleted: hadDigital,
+        historyRevision: this._mockRevisions.historyRevisions[cleanBaseCode],
+        slipCountRevision: this._mockRevisions.slipCountRevisions[cleanBaseCode],
+        materialSummaryRevision: this._mockRevisions.summaryRevisions[cleanBaseCode]
+      };
+    }
+
+    if (this.isUnconfiguredStaging) {
+      return {
+        success: false,
+        mode: "STAGING_UNCONFIGURED",
+        error: "STAGING_ENDPOINT_NOT_CONFIGURED"
+      };
+    }
+
+    try {
+      const resp = await fetch(this.endpointUrl, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: JSON.stringify({
+          action: "delete-final-slip",
+          payload: { slipNo: cleanSlipNo, baseCode: cleanBaseCode, employeeNo: cleanEmployeeNo }
+        })
+      });
+      if (!resp.ok) throw new Error(`HTTP Error: ${resp.status}`);
+      const data = await resp.json();
+      data.mode = "GAS_PRODUCTION";
+      return data;
+    } catch (e) {
+      console.error("[gasClient] deleteFinalSlip failed:", e);
+      return {
+        success: false,
+        mode: "GAS_PRODUCTION",
+        error: "BACKEND_UNAVAILABLE",
         message: e.message
       };
     }

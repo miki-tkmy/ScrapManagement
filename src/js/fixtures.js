@@ -1,4 +1,4 @@
-﻿// 開発・受入テスト用 TEST_FIXTURE (Central DB Master と分離)
+// 開発・受入テスト用 TEST_FIXTURE (Central DB Master と分離)
 const TEST_FIXTURE_BASES = [
   { baseCode: "B01", baseName: "仙台Base", region: "東北", active: true },
   { baseCode: "B02", baseName: "盛岡Base", region: "東北", active: true },
@@ -46,8 +46,10 @@ const TEST_FIXTURE_ITEMS = [
 
 const TEST_FIXTURE_FIXED_ITEMS = [
   { fixedItemId: "FIX01", itemName: "スクラップボックス", active: true },
-  { fixedItemId: "FIX02", itemName: "小物一式", active: true },
-  { fixedItemId: "FIX03", itemName: "完全不良品", active: true }
+  { fixedItemId: "FIX02", itemName: "小物カゴ", active: true },
+  { fixedItemId: "FIX03", itemName: "完全不良品", active: true },
+  { fixedItemId: "FIX04", itemName: "物品違い品", active: true },
+  { fixedItemId: "FIX05", itemName: "簿外品", active: true }
 ];
 
 if (typeof module !== "undefined" && module.exports) {

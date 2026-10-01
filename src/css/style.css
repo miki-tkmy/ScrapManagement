@@ -15,7 +15,7 @@
 
 :root {
   /* Runtime Asset Identity (Section E) */
-  --scrap-style-runtime-rev: "OPERATION-HOTFIX-20260930-02";
+  --scrap-style-runtime-rev: "OPERATION-ENHANCEMENT-20261001-01";
 
   /* 正式カラー変数 */
   --color-background: #FFFFFF;
@@ -1532,6 +1532,18 @@ body.modal-open {
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
+}
+
+/* DELETED 伝票のグレーアウト表示 (Section 23) */
+.hist-row-deleted {
+  background-color: #f3f4f6 !important;
+  opacity: 0.75;
+}
+.hist-row-deleted td {
+  color: var(--color-text-muted) !important;
+}
+.hist-row-deleted strong {
+  color: var(--color-text-muted) !important;
 }
 
 /* レスポンシブ切替: 820px 以下でモバイルカードレイアウトへ */

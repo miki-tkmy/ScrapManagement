@@ -1,7 +1,7 @@
 // アプリケーション統合コントローラー (app.js)
 // ========================================================================================
 // Runtime Asset Identity (Section E)
-const SCRAP_APP_RUNTIME_REV = "OPERATION-HOTFIX-20260930-02";
+const SCRAP_APP_RUNTIME_REV = "OPERATION-ENHANCEMENT-20261001-01";
 if (typeof window !== "undefined") {
   window.SCRAP_APP_RUNTIME_REV = SCRAP_APP_RUNTIME_REV;
 }
@@ -2986,14 +2986,15 @@ function applyHistoryFilters(slips, searchState = {}) {
   const sigFilter = searchState.signatureStatus || "ALL";
 
   const filtered = slips.filter(s => {
-    if (s.status !== "FINAL") return false;
+    if (s.status !== "FINAL" && s.status !== "DELETED") return false;
 
     const bDate = getHistoryBusinessDate(s);
     if (fromDate && bDate < fromDate) return false;
     if (toDate && bDate > toDate) return false;
 
-    if (sigFilter === "DIGITAL" && s.signatureStatus !== "DIGITAL") return false;
-    if (sigFilter === "NONE" && s.signatureStatus === "DIGITAL") return false;
+    const isDigital = (s.signatureStatus === "DIGITAL" || s.signStatus === "DIGITAL" || s.signStatus === "DELETED");
+    if (sigFilter === "DIGITAL" && !isDigital) return false;
+    if (sigFilter === "NONE" && isDigital) return false;
 
     if (keyword) {
       const slipNo = normalizeHistorySearchText(s.slipNo || s.slipId);
@@ -3076,8 +3077,8 @@ function renderHistoryRows(tbody, slips) {
   // 1. フィルター & 決定論的ソート適用
   filteredHistorySlips = applyHistoryFilters(centralHistorySlips, historySearchState);
 
-  // 2. 件数表示更新 (該当 X 件 / 全 Y 件)
-  const totalFinalSlips = centralHistorySlips.filter(s => s.status === "FINAL").length;
+  // 2. 件数表示更新 (該当 X 件 / 全 Y 件: FINAL + DELETED を履歴件数として数える - Section 31)
+  const totalFinalSlips = centralHistorySlips.filter(s => s.status === "FINAL" || s.status === "DELETED").length;
   const countTextEl = document.getElementById("history-search-count-text");
   if (countTextEl) {
     countTextEl.textContent = `該当 ${filteredHistorySlips.length}件 / 全 ${totalFinalSlips}件`;
@@ -3112,11 +3113,24 @@ function renderHistoryRows(tbody, slips) {
     const displayDate = formatJstDate(s.date || s.createdAt);
     const slipNo = s.slipNo || s.slipId || "";
     const staffName = s.staffName || "-";
-    const sigBadge = s.signatureStatus === "DIGITAL"
+    const isDeleted = s.status === "DELETED";
+    const sigBadge = (s.signatureStatus === "DIGITAL" || s.signStatus === "DIGITAL")
       ? `<span class="hist-sig-badge badge-digital">電子署名済み</span>`
       : `<span class="hist-sig-badge badge-none">署名なし</span>`;
+    const statusBadge = isDeleted
+      ? `<span class="brand-badge" style="background:#6b7280; color:#fff; font-size:0.75rem;">削除済み</span>`
+      : `<span class="brand-badge" style="background:var(--color-primary); color:var(--color-button-text); font-size:0.75rem;">完了</span>`;
+    const printBtn = isDeleted
+      ? `<button type="button" class="btn btn-secondary hist-action-btn" disabled style="opacity:0.5; cursor:not-allowed;">印刷</button>`
+      : `<button type="button" class="btn btn-secondary hist-action-btn" onclick="printSlipFromHistory('${escapeHtml(slipNo)}')">印刷</button>`;
+    const mobilePrintBtn = isDeleted
+      ? `<button type="button" class="btn btn-secondary btn-sm hist-action-btn" disabled style="opacity:0.5; cursor:not-allowed;">印刷</button>`
+      : `<button type="button" class="btn btn-secondary btn-sm hist-action-btn" onclick="printSlipFromHistory('${escapeHtml(slipNo)}')">印刷</button>`;
 
     const tr = document.createElement("tr");
+    if (isDeleted) {
+      tr.className = "hist-row-deleted";
+    }
     tr.innerHTML = `
       <td class="history-col-mobile">
         <div class="history-row-1 history-row-top">
@@ -3130,7 +3144,7 @@ function renderHistoryRows(tbody, slips) {
           <div class="hist-actions">
             ${sigBadge}
             <button type="button" class="btn btn-secondary btn-sm hist-action-btn" onclick="openHistoryDetailModal('${escapeHtml(slipNo)}')">詳細</button>
-            <button type="button" class="btn btn-secondary btn-sm hist-action-btn" onclick="printSlipFromHistory('${escapeHtml(slipNo)}')">印刷</button>
+            ${mobilePrintBtn}
           </div>
         </div>
       </td>
@@ -3139,13 +3153,12 @@ function renderHistoryRows(tbody, slips) {
       <td class="hist-desktop-col col-staff">${escapeHtml(staffName)}</td>
       <td class="hist-desktop-col col-vendor">${escapeHtml(s.vendorName || "-")}</td>
       <td class="hist-desktop-col col-sig">${sigBadge}</td>
-      <td class="hist-desktop-col col-status"><span class="brand-badge" style="background:var(--color-primary); color:var(--color-button-text); font-size:0.75rem;">完了</span></td>
+      <td class="hist-desktop-col col-status">${statusBadge}</td>
       <td class="hist-desktop-col col-actions">
         <div class="hist-desktop-actions-wrap">
           <button type="button" class="btn btn-secondary hist-action-btn"
             onclick="openHistoryDetailModal('${escapeHtml(slipNo)}')">詳細</button>
-          <button type="button" class="btn btn-secondary hist-action-btn"
-            onclick="printSlipFromHistory('${escapeHtml(slipNo)}')">印刷</button>
+          ${printBtn}
         </div>
       </td>
     `;
@@ -3220,11 +3233,32 @@ function renderHistoryDetailContent(slip) {
   const slipNo = slip.slipNo || slip.slipId || "";
   const dateStr = formatJstDateTime(slip.date || slip.createdAt);
   const finStr = formatJstDateTime(slip.finalizedAt || slip.createdAt);
+  const isDeleted = (slip.status === "DELETED");
+  const isFinal = (slip.status === "FINAL");
 
-  // 署名表示: Decision C 厳格遵守 (バイナリ/Base64/FileId 非表示、テキストバッジのみ、改行禁止 - Section L, M, N)
-  const sigText = slip.signatureStatus === "DIGITAL"
-    ? `<span class="hist-sig-badge badge-digital">電子署名済み</span>`
-    : `<span class="hist-sig-badge badge-none">署名なし</span>`;
+  // モーダルフッターボタン制御 (Section 25)
+  const printBtn = document.getElementById("btn-hist-detail-print");
+  const deleteBtn = document.getElementById("btn-hist-detail-delete");
+  if (isDeleted) {
+    if (printBtn) { printBtn.style.display = "none"; printBtn.disabled = true; }
+    if (deleteBtn) { deleteBtn.style.display = "none"; deleteBtn.disabled = true; }
+  } else if (isFinal) {
+    if (printBtn) { printBtn.style.display = "inline-flex"; printBtn.disabled = false; }
+    if (deleteBtn) { deleteBtn.style.display = "inline-flex"; deleteBtn.disabled = false; }
+  } else {
+    if (printBtn) { printBtn.style.display = "none"; }
+    if (deleteBtn) { deleteBtn.style.display = "none"; }
+  }
+
+  // 署名表示: Decision C 厳格遵守 & 削除時メッセージ (Section 27, 28)
+  let sigText = "";
+  if (isDeleted && (slip.signStatus === "DELETED" || slip.signatureStatus === "DELETED")) {
+    sigText = `<span class="hist-sig-deleted-msg" style="color:var(--color-danger); font-size:0.875rem; font-weight:600;">伝票を削除したため署名を削除しました</span>`;
+  } else if (slip.signatureStatus === "DIGITAL" || slip.signStatus === "DIGITAL") {
+    sigText = `<span class="hist-sig-badge badge-digital">電子署名済み</span>`;
+  } else {
+    sigText = `<span class="hist-sig-badge badge-none">署名なし</span>`;
+  }
 
   // 明細行生成 (CODE品、定型品、その他)
   let itemsHtml = "";
@@ -3292,6 +3326,21 @@ function renderHistoryDetailContent(slip) {
         <span class="history-detail-field-label">確定日時</span>
         <span class="history-detail-field-val">${escapeHtml(finStr)}</span>
       </div>
+      ${isDeleted ? `
+      <div class="history-detail-field">
+        <span class="history-detail-field-label">状態</span>
+        <span class="history-detail-field-val"><span class="brand-badge" style="background:#6b7280; color:#fff; font-size:0.75rem;">削除済み</span></span>
+      </div>` : ""}
+      ${isDeleted && slip.deletedAt ? `
+      <div class="history-detail-field">
+        <span class="history-detail-field-label">削除日時</span>
+        <span class="history-detail-field-val">${escapeHtml(formatJstDateTime(slip.deletedAt))}</span>
+      </div>` : ""}
+      ${isDeleted && slip.deletedBy ? `
+      <div class="history-detail-field">
+        <span class="history-detail-field-label">削除者</span>
+        <span class="history-detail-field-val">${escapeHtml(slip.deletedBy)}</span>
+      </div>` : ""}
     </div>
 
     <h4 style="font-size:0.95rem; margin:1rem 0 0.5rem 0; color:var(--color-headline);">処分資材明細</h4>
@@ -3326,6 +3375,13 @@ function closeHistoryDetailModal() {
 
 async function prepareAndPrintSlip(s) {
   if (!s) return;
+  if (s.status === "DELETED") {
+    showAppModal({
+      title: "印刷不可",
+      message: "削除された伝票は印刷できません。"
+    });
+    return false;
+  }
   const slipNo = s.slipNo || s.slipId;
   const baseCode = s.baseCode || workingBaseCode || resolvedBaseCode || "";
   if (s.signatureStatus === "DIGITAL" && !s.vendorSignatureImage && !s.signatureData) {
@@ -3366,6 +3422,102 @@ function handleHistoryDetailPrint() {
   }
 }
 
+// 確定伝票論理削除ハンドラ (Section 13, 14, 15)
+function handleHistoryDetailDelete() {
+  if (!currentHistoryDetailSlip) return;
+  const slip = currentHistoryDetailSlip;
+  if (slip.status !== "FINAL") {
+    showAppModal({
+      title: "エラー",
+      message: "確定済みの伝票のみ削除できます。"
+    });
+    return;
+  }
+
+  showAppModal({
+    title: "確認",
+    message: "この伝票を削除しますか？\n\n伝票データは履歴として保持され、一覧では「削除済み」と表示されます。\n電子署名がある場合は署名画像も削除されます。",
+    cancelText: "キャンセル",
+    okText: "削除する",
+    onOk: async () => {
+      const slipNo = slip.slipNo || slip.slipId;
+      const baseCode = slip.baseCode || workingBaseCode || resolvedBaseCode || "";
+      const employeeNo = currentEmployeeNo || resolvedEmployeeNo || slip.employeeNo || "";
+
+      const loading = document.getElementById("hist-detail-loading");
+      const body = document.getElementById("history-detail-modal-body") || document.getElementById("hist-detail-body");
+      if (loading) loading.style.display = "block";
+      if (body) body.style.opacity = "0.5";
+
+      try {
+        const res = await gasClient.deleteFinalSlip({ slipNo, baseCode, employeeNo });
+        if (loading) loading.style.display = "none";
+        if (body) body.style.opacity = "1";
+
+        if (res && res.success) {
+          slip.status = "DELETED";
+          slip.deletedAt = res.deletedAt || new Date().toISOString();
+          slip.deletedBy = res.deletedBy || employeeNo;
+          if (res.signatureDeleted || slip.signStatus === "DIGITAL" || slip.signatureStatus === "DIGITAL") {
+            slip.signStatus = "DELETED";
+            slip.signatureStatus = "DELETED";
+            slip.vendorSignatureImage = null;
+            slip.signatureData = null;
+          }
+          historyDetailCache.set(slipNo, slip);
+
+          // centralHistorySlipsの該当レコードを更新
+          const foundInCentral = (centralHistorySlips || []).find(s => (s.slipNo === slipNo || s.slipId === slipNo));
+          if (foundInCentral) {
+            foundInCentral.status = "DELETED";
+            foundInCentral.deletedAt = slip.deletedAt;
+            foundInCentral.deletedBy = slip.deletedBy;
+            if (res.signatureDeleted || foundInCentral.signStatus === "DIGITAL" || foundInCentral.signatureStatus === "DIGITAL") {
+              foundInCentral.signStatus = "DELETED";
+              foundInCentral.signatureStatus = "DELETED";
+              foundInCentral.vendorSignatureImage = null;
+              foundInCentral.signatureData = null;
+            }
+          }
+
+          // 再描画
+          renderHistoryDetailContent(slip);
+          const tbody = document.getElementById("history-table-tbody");
+          if (tbody) {
+            renderHistoryRows(tbody, centralHistorySlips);
+          }
+
+          // 集計キャッシュの無効化 & 集計再描画
+          if (typeof TerminalStorage !== "undefined" && TerminalStorage.invalidateSummaryCache) {
+            TerminalStorage.invalidateSummaryCache(baseCode);
+          }
+          if (document.getElementById("view-summary") && document.getElementById("view-summary").style.display !== "none") {
+            renderSummaryView();
+          }
+
+          showAppModal({
+            title: "完了",
+            message: "伝票を削除しました。"
+          });
+        } else {
+          showAppModal({
+            title: "削除エラー",
+            message: res && res.message ? res.message : "伝票の削除に失敗しました。"
+          });
+        }
+      } catch (err) {
+        if (loading) loading.style.display = "none";
+        if (body) body.style.opacity = "1";
+        console.error("handleHistoryDetailDelete error:", err);
+        showAppModal({
+          title: "通信エラー",
+          message: "通信エラーが発生しました。ネットワーク状態を確認してください。"
+        });
+      }
+    }
+  });
+}
+
 // 印刷処理互換ラッパー (インデックスまたは伝票番号を受け入れ)
 function printSlipFromHistory(param) {
   let s = null;
@@ -3375,7 +3527,7 @@ function printSlipFromHistory(param) {
     s = (filteredHistorySlips && filteredHistorySlips.find(x => (x.slipNo === param || x.slipId === param)))
       || centralHistorySlips.find(x => (x.slipNo === param || x.slipId === param));
   }
-  if (!s) return;
+  if (!s || s.status === "DELETED") return;
 
   const slipNo = s.slipNo || s.slipId;
   // 詳細キャッシュまたは既存コード品をチェック
@@ -4414,6 +4566,7 @@ if (typeof module !== "undefined" && module.exports) {
     renderHistoryDetailContent,
     closeHistoryDetailModal,
     handleHistoryDetailPrint,
+    handleHistoryDetailDelete,
     renderHistoryRows,
     sanitizeCsvCell,
     generateHistoryHeaderCsv,
@@ -4470,6 +4623,7 @@ if (typeof window !== "undefined") {
   window.renderHistoryDetailContent = renderHistoryDetailContent;
   window.closeHistoryDetailModal = closeHistoryDetailModal;
   window.handleHistoryDetailPrint = handleHistoryDetailPrint;
+  window.handleHistoryDetailDelete = handleHistoryDetailDelete;
   window.renderHistoryRows = renderHistoryRows;
   window.sanitizeCsvCell = sanitizeCsvCell;
   window.generateHistoryHeaderCsv = generateHistoryHeaderCsv;
