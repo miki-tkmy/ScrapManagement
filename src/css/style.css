@@ -15,7 +15,7 @@
 
 :root {
   /* Runtime Asset Identity (Section E) */
-  --scrap-style-runtime-rev: "OPERATION-ENHANCEMENT-20261001-01";
+  --scrap-style-runtime-rev: "OPERATION-ENHANCEMENT-20261001-02";
 
   /* 正式カラー変数 */
   --color-background: #FFFFFF;
@@ -1648,6 +1648,11 @@ body.modal-open {
 #history-detail-modal {
   padding: 16px;
   box-sizing: border-box;
+  z-index: 1000 !important;
+}
+
+#generic-app-modal {
+  z-index: 2000 !important;
 }
 
 #history-detail-modal .history-detail-modal-content {
@@ -1776,11 +1781,21 @@ body.modal-open {
   padding: 16px 20px !important;
   border-top: 1px solid var(--color-border) !important;
   display: flex !important;
-  justify-content: flex-end !important;
+  justify-content: space-between !important;
   align-items: center !important;
-  gap: 10px !important;
   background-color: var(--color-surface-subtle) !important;
   box-sizing: border-box !important;
+}
+
+.history-detail-actions-left {
+  display: flex !important;
+  align-items: center !important;
+}
+
+.history-detail-actions-right {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
 }
 
 .history-detail-actions .btn {
@@ -1788,5 +1803,32 @@ body.modal-open {
   padding: 0.4rem 1.25rem !important;
   font-size: 0.9rem !important;
   font-weight: 600 !important;
+}
+
+.btn-outline-gray {
+  background: transparent !important;
+  border: 1.5px solid #9ca3af !important;
+  color: #4b5563 !important;
+  box-shadow: none !important;
+}
+
+.btn-outline-gray:hover {
+  background-color: #f3f4f6 !important;
+  color: #1f2937 !important;
+}
+
+@media (max-width: 480px) {
+  .history-detail-actions {
+    flex-wrap: wrap !important;
+    gap: 10px !important;
+  }
+  .history-detail-actions-left {
+    width: 100% !important;
+    justify-content: flex-start !important;
+  }
+  .history-detail-actions-right {
+    width: 100% !important;
+    justify-content: flex-end !important;
+  }
 }
 

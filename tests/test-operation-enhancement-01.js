@@ -36,9 +36,20 @@ const styleCss = fs.readFileSync(path.join(repoRoot, "src", "css", "style.css"),
 const appJs = fs.readFileSync(path.join(repoRoot, "src", "js", "app.js"), "utf8");
 const fixturesJs = fs.readFileSync(path.join(repoRoot, "src", "js", "fixtures.js"), "utf8");
 const gasClientJs = fs.readFileSync(path.join(repoRoot, "src", "js", "gasClient.js"), "utf8");
-const gasClientFixPrefJs = fs.readFileSync(path.join(repoRoot, "src", "js", "gasClient-gate3a7-fixpref-20260927.js"), "utf8");
-const syncMasterPs1 = fs.readFileSync(path.join(repoRoot, "scripts", "sync-company-fixed-item-master.ps1"), "utf8");
-const codeJs = fs.readFileSync(path.join(repoRoot, "scratch", "gas_prod", "Code.js"), "utf8");
+const syncMasterPs1Path = [
+  path.join(repoRoot, "scripts", "sync-company-fixed-item-master.ps1"),
+  path.join(repoRoot, "..", "scripts", "sync-company-fixed-item-master.ps1"),
+  path.join(repoRoot, "..", "..", "scripts", "sync-company-fixed-item-master.ps1")
+].find(p => fs.existsSync(p));
+const syncMasterPs1 = fs.readFileSync(syncMasterPs1Path, "utf8");
+
+const codeJsPath = [
+  path.join(repoRoot, "scratch", "gas_prod", "Code.js"),
+  path.join(repoRoot, "..", "gas_prod", "Code.js"),
+  path.join(repoRoot, "..", "..", "gas_prod", "Code.js"),
+  path.join(repoRoot, "..", "..", "scratch", "gas_prod", "Code.js")
+].find(p => fs.existsSync(p));
+const codeJs = fs.readFileSync(codeJsPath, "utf8");
 
 async function main() {
   // -----------------------------------------------------------------------------

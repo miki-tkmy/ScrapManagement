@@ -523,8 +523,8 @@ async function main() {
       "resetInputFormAfterSubmission must NOT unconditionally reset vendorInput.value to empty string"
     );
 
-    // Verify Unified Release ID across all assets (hotfix 02 or enhancement 01)
-    const validIds = ["OPERATION-HOTFIX-20260930-02", "OPERATION-ENHANCEMENT-20261001-01"];
+    // Verify Unified Release ID across all assets (hotfix 02 or enhancement 01/02)
+    const validIds = ["OPERATION-HOTFIX-20260930-02", "OPERATION-ENHANCEMENT-20261001-01", "OPERATION-ENHANCEMENT-20261001-02"];
     assert(validIds.some(id => styleCss.includes(`--scrap-style-runtime-rev: "${id}";`)), "style.css must have unified release ID");
     assert(validIds.some(id => appJs.includes(`const SCRAP_APP_RUNTIME_REV = "${id}";`)), "app.js must have unified release ID");
     assert(validIds.some(id => gasClientJs.includes(`const SCRAP_FRONTEND_BUILD_ID = "${id}";`)), "gasClient.js must have unified release ID");

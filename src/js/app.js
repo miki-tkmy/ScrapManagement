@@ -1,7 +1,7 @@
 // アプリケーション統合コントローラー (app.js)
 // ========================================================================================
 // Runtime Asset Identity (Section E)
-const SCRAP_APP_RUNTIME_REV = "OPERATION-ENHANCEMENT-20261001-01";
+const SCRAP_APP_RUNTIME_REV = "OPERATION-ENHANCEMENT-20261001-02";
 if (typeof window !== "undefined") {
   window.SCRAP_APP_RUNTIME_REV = SCRAP_APP_RUNTIME_REV;
 }
@@ -286,6 +286,7 @@ function startMasterSynchronization() {
     if (cachedMasters.fixedItems && cachedMasters.fixedItems.length > 0) {
       window.ACTIVE_FIXED_ITEMS = cachedMasters.fixedItems;
       initFixedItemsList();
+      renderSettingsView();
     }
     if (cachedMasters.categories && cachedMasters.categories.length > 0) {
       window.AVAILABLE_CATEGORIES = cachedMasters.categories;
@@ -311,15 +312,6 @@ function checkMasterRevisionAndUpdate() {
   const cachedMasters = TerminalStorage.getMasterCache();
   const cachedRev = (cachedMasters && cachedMasters.masterRevision) ? cachedMasters.masterRevision : 0;
   const baseCode = resolvedBaseCode || "GLOBAL";
-
-  // 既存の fresh な snapshot があれば通信せず比較
-  const existingSnapshot = TerminalStorage.getStateSnapshot(baseCode);
-  if (existingSnapshot && existingSnapshot.masterRevision !== undefined && TerminalStorage.isStateSnapshotFresh(baseCode)) {
-    if (cachedMasters && existingSnapshot.masterRevision === cachedRev) {
-      hideMasterStatusBar(300);
-      return;
-    }
-  }
 
   gasClient.fetchState(baseCode).then(stateRes => {
     if (stateRes && stateRes.success) {
@@ -369,6 +361,7 @@ function fetchAndApplyMasters(targetRevision = 1) {
       if (Array.isArray(res.fixedItems) && res.fixedItems.length > 0) {
         window.ACTIVE_FIXED_ITEMS = res.fixedItems;
         initFixedItemsList();
+        renderSettingsView();
       }
       if (Array.isArray(res.categories) && res.categories.length > 0) {
         window.AVAILABLE_CATEGORIES = res.categories;
@@ -1705,7 +1698,7 @@ function initFixedItemsList() {
         <div class="qty-input-group fixed-qty-group">
           <button type="button" class="btn-qty-input-step" id="btn-fixed-minus-${fi.fixedItemId}" onclick="stepFixedItemQuantity('${fi.fixedItemId}', -1)" aria-label="${fi.itemName}の数量を1減らす">－</button>
           <input type="text" class="form-input" style="padding:0.4rem 0.4rem; text-align:center;"
-            placeholder="例: 1, 一式" id="fixed-qty-${fi.fixedItemId}">
+            placeholder="1, 一式" id="fixed-qty-${fi.fixedItemId}">
           <button type="button" class="btn-qty-input-step" id="btn-fixed-plus-${fi.fixedItemId}" onclick="stepFixedItemQuantity('${fi.fixedItemId}', 1)" aria-label="${fi.itemName}の数量を1増やす">＋</button>
         </div>
       </td>
@@ -1989,7 +1982,12 @@ function showAppModal({ title = "確認", message = "", okText = "閉じる", ca
 function closeGenericModal(result) {
   const modal = document.getElementById("generic-app-modal");
   if (modal) modal.style.display = "none";
-  document.body.classList.remove("modal-open");
+
+  const histModal = document.getElementById("history-detail-modal");
+  const isHistModalOpen = histModal && histModal.style.display !== "none";
+  if (!isHistModalOpen) {
+    document.body.classList.remove("modal-open");
+  }
 
   if (typeof genericModalCallback === "function") {
     const cb = genericModalCallback;
@@ -3370,6 +3368,7 @@ function closeHistoryDetailModal() {
     modal.style.display = "none";
   }
   document.body.style.overflow = "";
+  document.body.classList.remove("modal-open");
   currentHistoryDetailSlip = null;
 }
 
@@ -3442,7 +3441,7 @@ function handleHistoryDetailDelete() {
     onOk: async () => {
       const slipNo = slip.slipNo || slip.slipId;
       const baseCode = slip.baseCode || workingBaseCode || resolvedBaseCode || "";
-      const employeeNo = currentEmployeeNo || resolvedEmployeeNo || slip.employeeNo || "";
+      const employeeNo = resolvedEmployeeNo || slip.employeeNo || "";
 
       const loading = document.getElementById("hist-detail-loading");
       const body = document.getElementById("history-detail-modal-body") || document.getElementById("hist-detail-body");
@@ -3502,7 +3501,7 @@ function handleHistoryDetailDelete() {
         } else {
           showAppModal({
             title: "削除エラー",
-            message: res && res.message ? res.message : "伝票の削除に失敗しました。"
+            message: (res && res.message) ? res.message : ((res && res.error) ? res.error : "伝票の削除に失敗しました。")
           });
         }
       } catch (err) {
@@ -3511,7 +3510,7 @@ function handleHistoryDetailDelete() {
         console.error("handleHistoryDetailDelete error:", err);
         showAppModal({
           title: "通信エラー",
-          message: "通信エラーが発生しました。ネットワーク状態を確認してください。"
+          message: (err && err.message) ? err.message : "通信エラーが発生しました。ネットワーク状態を確認してください。"
         });
       }
     }

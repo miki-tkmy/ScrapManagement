@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>ScrapManagement - スクラップ処分記録</title>
-  <link rel="stylesheet" href="src/css/style.css?v=OPERATION-ENHANCEMENT-20261001-01">
-  <link rel="stylesheet" href="src/css/print.css?v=OPERATION-ENHANCEMENT-20261001-01" media="print">
+  <link rel="stylesheet" href="src/css/style.css?v=OPERATION-ENHANCEMENT-20261001-02">
+  <link rel="stylesheet" href="src/css/print.css?v=OPERATION-ENHANCEMENT-20261001-02" media="print">
 </head>
 <body>
   <!-- アプリヘッダー (通常状態では環境名や会社名のバナーを表示しない) -->
@@ -435,7 +435,7 @@
           <p style="font-size:0.75rem; color:var(--color-text-muted); margin-bottom:0.6rem;">※個人情報・社員名・秘密情報は一切表示されません</p>
           <div style="font-size:0.8rem; font-family:monospace; line-height:1.6; word-break:break-all;">
             <div style="background:#fff; border:1px solid #ddd; padding:8px; margin-bottom:8px; border-radius:4px;">
-              <div><strong>HTML Build:</strong> <span id="diag-html-build">OPERATION-ENHANCEMENT-20261001-01</span></div>
+              <div><strong>HTML Build:</strong> <span id="diag-html-build">OPERATION-ENHANCEMENT-20261001-02</span></div>
               <div><strong>App Runtime:</strong> <span id="diag-app-runtime">--</span></div>
               <div><strong>Style Runtime:</strong> <span id="diag-style-runtime">--</span></div>
               <div id="diag-asset-status" style="margin-top:4px; font-weight:bold;"></div>
@@ -458,7 +458,7 @@
         <!-- Frontend Build ID 常時表示 -->
         <div class="settings-section" style="border-top:1px solid var(--color-border); padding-top:1rem; margin-top:1rem; text-align:center;">
           <div id="frontend-build-id-display" style="font-size:0.75rem; color:var(--color-text-muted); font-family:monospace;">
-            Build: OPERATION-ENHANCEMENT-20261001-01
+            Build: OPERATION-ENHANCEMENT-20261001-02
           </div>
         </div>
       </div>
@@ -564,11 +564,15 @@
         <!-- 動的生成 (renderHistoryDetailContent) -->
       </div>
 
-      <!-- フッターアクション (ボタン2つに統一・端への密着解消) -->
+      <!-- フッターアクション (左: 削除 / 右: 印刷・閉じる) -->
       <div class="history-detail-actions">
-        <button type="button" class="btn btn-secondary" id="btn-hist-detail-print" onclick="handleHistoryDetailPrint()">この伝票を印刷</button>
-        <button type="button" class="btn btn-danger" id="btn-hist-detail-delete" style="display:none;" onclick="handleHistoryDetailDelete()">削除</button>
-        <button type="button" class="btn btn-primary" id="btn-hist-detail-close" onclick="closeHistoryDetailModal()">閉じる</button>
+        <div class="history-detail-actions-left">
+          <button type="button" class="btn btn-danger" id="btn-hist-detail-delete" style="display:none;" onclick="handleHistoryDetailDelete()">削除</button>
+        </div>
+        <div class="history-detail-actions-right">
+          <button type="button" class="btn btn-secondary" id="btn-hist-detail-print" onclick="handleHistoryDetailPrint()">この伝票を印刷</button>
+          <button type="button" class="btn btn-outline-gray" id="btn-hist-detail-close" onclick="closeHistoryDetailModal()">閉じる</button>
+        </div>
       </div>
     </div>
   </div>
@@ -641,18 +645,18 @@
   </div>
 
   <!-- スクリプト読み込み (依存順) -->
-  <script src="src/js/config.js?v=OPERATION-ENHANCEMENT-20261001-01"></script>
-  <script src="src/js/fixtures.js?v=OPERATION-ENHANCEMENT-20261001-01"></script>
-  <script src="src/js/baseService.js?v=OPERATION-ENHANCEMENT-20261001-01"></script>
-  <script src="src/js/itemService.js?v=OPERATION-ENHANCEMENT-20261001-01"></script>
-  <script src="src/js/quantityEngine.js?v=OPERATION-ENHANCEMENT-20261001-01"></script>
-  <script src="src/js/weightEngine.js?v=OPERATION-ENHANCEMENT-20261001-01"></script>
-  <script src="src/js/signatureHelper.js?v=OPERATION-ENHANCEMENT-20261001-01"></script>
-  <script src="src/js/signature.js?v=OPERATION-ENHANCEMENT-20261001-01"></script>
-  <script src="src/js/gasClient-gate3a7-fixpref-20260927.js?v=OPERATION-ENHANCEMENT-20261001-01"></script>
-  <script src="src/js/storage.js?v=OPERATION-ENHANCEMENT-20261001-01"></script>
-  <script src="src/js/validator.js?v=OPERATION-ENHANCEMENT-20261001-01"></script>
-  <script src="src/js/app.js?v=OPERATION-ENHANCEMENT-20261001-01"></script>
+  <script src="src/js/config.js?v=OPERATION-ENHANCEMENT-20261001-02"></script>
+  <script src="src/js/fixtures.js?v=OPERATION-ENHANCEMENT-20261001-02"></script>
+  <script src="src/js/baseService.js?v=OPERATION-ENHANCEMENT-20261001-02"></script>
+  <script src="src/js/itemService.js?v=OPERATION-ENHANCEMENT-20261001-02"></script>
+  <script src="src/js/quantityEngine.js?v=OPERATION-ENHANCEMENT-20261001-02"></script>
+  <script src="src/js/weightEngine.js?v=OPERATION-ENHANCEMENT-20261001-02"></script>
+  <script src="src/js/signatureHelper.js?v=OPERATION-ENHANCEMENT-20261001-02"></script>
+  <script src="src/js/signature.js?v=OPERATION-ENHANCEMENT-20261001-02"></script>
+  <script src="src/js/gasClient-gate3a7-fixpref-20260927.js?v=OPERATION-ENHANCEMENT-20261001-02"></script>
+  <script src="src/js/storage.js?v=OPERATION-ENHANCEMENT-20261001-02"></script>
+  <script src="src/js/validator.js?v=OPERATION-ENHANCEMENT-20261001-02"></script>
+  <script src="src/js/app.js?v=OPERATION-ENHANCEMENT-20261001-02"></script>
 </body>
 </html>
 
