@@ -1,7 +1,7 @@
 // アプリケーション統合コントローラー (app.js)
 // ========================================================================================
 // Runtime Asset Identity (Section E)
-const SCRAP_APP_RUNTIME_REV = "OPERATION-ENHANCEMENT-20261001-03";
+const SCRAP_APP_RUNTIME_REV = "OPERATION-UX-20261007-01";
 if (typeof window !== "undefined") {
   window.SCRAP_APP_RUNTIME_REV = SCRAP_APP_RUNTIME_REV;
 }
@@ -2157,7 +2157,8 @@ function executeFinalize(isWithoutSignature, signatureDataUrl = null) {
   const fixedItems = collectFixedItems();
   const weightSummary = WeightEngine.calculateEstimatedWeight(currentCodeItems);
   const now = new Date().toISOString();
-  const finalDate = currentResumedDraftDate || getJstDateString();
+  // Section 4: FINAL伝票の正式処分日は完了処理を実行したJST日付 (currentResumedDraftDate は引き継がない)
+  const finalDate = getJstDateString();
 
   if (!pendingFinalizeSlip) {
     const secureId = generateSecureScrapId();
@@ -2515,7 +2516,16 @@ function saveTemporaryDraft() {
   });
 }
 
-function resumeDraftSlip(slipId) {
+function resumeDraftSlip(slipId, button = null) {
+  const lockKey = `resume:${slipId}`;
+  if (historyActionLocks.has(lockKey)) return;
+  historyActionLocks.add(lockKey);
+
+  if (!button && typeof event !== "undefined" && event && event.target) {
+    button = event.target.closest("button");
+  }
+  if (button) setActionButtonBusy(button, true, "読込中...");
+
   gasClient.fetchSlip(slipId).then(res => {
     if (res && res.success && res.slip) {
       const s = res.slip;
@@ -2563,23 +2573,46 @@ function resumeDraftSlip(slipId) {
         title: "下書き再開",
         message: "下書きの入力を再開しました。\n署名は一時保存されないため、確定前に再度入力してください。"
       });
+    } else {
+      showAppModal({
+        title: "再開エラー",
+        message: (res && res.error) ? res.error : "一時保存伝票の取得に失敗しました。"
+      });
     }
+  }).catch(err => {
+    console.error("[app.js] resumeDraftSlip error:", err);
+    showAppModal({
+      title: "通信エラー",
+      message: "一時保存データの取得中に通信エラーが発生しました。"
+    });
+  }).finally(() => {
+    if (button) setActionButtonBusy(button, false);
+    historyActionLocks.delete(lockKey);
   });
 }
 
 // 12.5. 一時保存下書きの削除 (論理削除 & モーダル確認)
-function confirmDeleteDraft(draftId) {
+function confirmDeleteDraft(draftId, button = null) {
   showAppModal({
     title: "一時保存を削除",
     message: "この一時保存を削除しますか？",
     okText: "削除",
     cancelText: "キャンセル",
-    onOk: () => executeDeleteDraft(draftId)
+    onOk: () => executeDeleteDraft(draftId, button)
   });
 }
 
-function executeDeleteDraft(draftId) {
+function executeDeleteDraft(draftId, button = null) {
   if (!draftId) return;
+  const lockKey = `deleteDraft:${draftId}`;
+  if (historyActionLocks.has(lockKey)) return;
+  historyActionLocks.add(lockKey);
+
+  if (!button && typeof event !== "undefined" && event && event.target) {
+    button = event.target.closest("button");
+  }
+  if (button) setActionButtonBusy(button, true, "削除中...");
+
   const baseCode = workingBaseCode || resolvedBaseCode;
 
   gasClient.deleteDraft({
@@ -2616,6 +2649,9 @@ function executeDeleteDraft(draftId) {
       title: "通信エラー",
       message: "通信エラーにより削除できませんでした。"
     });
+  }).finally(() => {
+    if (button) setActionButtonBusy(button, false);
+    historyActionLocks.delete(lockKey);
   });
 }
 
@@ -2816,8 +2852,8 @@ function renderDraftSection(drafts) {
         </div>
       </div>
       <div class="draft-card-actions">
-        <button type="button" class="btn btn-secondary btn-sm" onclick="resumeDraftSlip('${draftId}')">再開</button>
-        <button type="button" class="btn btn-outline-danger btn-sm" onclick="confirmDeleteDraft('${draftId}')">削除</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="resumeDraftSlip('${draftId}', this)">再開</button>
+        <button type="button" class="btn btn-outline-danger btn-sm" onclick="confirmDeleteDraft('${draftId}', this)">削除</button>
       </div>
     `;
     list.appendChild(card);
@@ -2930,7 +2966,50 @@ function fetchAndRenderHistory(tbody, baseCode, revision) {
 // P11 履歴検索・フィルター・ソート・詳細モーダル コアロジック
 // ============================================================
 
-// E. 業務日付取得ヘルパー (slip.date 優先、欠損時 createdAt。必ず canonical YYYY-MM-DD を返す)
+// 履歴系アクション用ロック & 共通Busy状態管理 (Section 26, 27)
+const historyActionLocks = new Set();
+
+function setActionButtonBusy(button, busy, loadingText = "処理中...") {
+  if (!button) return;
+  if (busy) {
+    if (!button.dataset.originalHtml) {
+      button.dataset.originalHtml = button.innerHTML;
+    }
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.classList.add("is-loading");
+    button.innerHTML = `<span class="btn-spinner" aria-hidden="true" style="margin-right: 4px; vertical-align: middle;"></span>${loadingText}`;
+  } else {
+    if (button.dataset.originalHtml) {
+      button.innerHTML = button.dataset.originalHtml;
+      delete button.dataset.originalHtml;
+    }
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+    button.classList.remove("is-loading");
+  }
+}
+
+function attachPrintBusyRelease(button, lockKey) {
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    if (button) setActionButtonBusy(button, false);
+    if (lockKey) historyActionLocks.delete(lockKey);
+    if (typeof window !== "undefined") {
+      window.removeEventListener("afterprint", release);
+    }
+  };
+
+  if (typeof window !== "undefined") {
+    window.addEventListener("afterprint", release, { once: true });
+  }
+  // 10秒フォールバック (Section 33)
+  setTimeout(release, 10000);
+}
+
+// E. 業務日付取得ヘルパー (Section 8: FINAL / DELETED: 1. slip.date, 2. slip.finalizedAt, 3. slip.createdAt の順。必ず canonical YYYY-MM-DD を返す)
 function getHistoryBusinessDate(slip) {
   if (!slip) return "";
   if (slip.date) {
@@ -2939,6 +3018,15 @@ function getHistoryBusinessDate(slip) {
       if (c) return c;
     } else {
       const c = toCanonicalBusinessDate(slip.date);
+      if (c) return c;
+    }
+  }
+  if (slip.finalizedAt) {
+    if (typeof slip.finalizedAt === "string" && slip.finalizedAt.trim()) {
+      const c = toCanonicalBusinessDate(slip.finalizedAt.trim());
+      if (c) return c;
+    } else {
+      const c = toCanonicalBusinessDate(slip.finalizedAt);
       if (c) return c;
     }
   }
@@ -2954,28 +3042,46 @@ function normalizeHistorySearchText(value) {
   return String(value || "").trim().normalize("NFKC").toLowerCase();
 }
 
-// F. FINAL履歴の決定論的sort
-// 第1キー: Business Date DESC (canonical YYYY-MM-DD), 第2キー: FinalizedAt DESC, 第3キー: SlipNo DESC
-function sortFinalHistorySlips(slips) {
+// F. FINAL履歴の決定論的sort (Section 17, 18)
+// sortField: "DATE" または "SLIP_NO", sortOrder: "DESC" または "ASC"
+function sortFinalHistorySlips(slips, sortField = "DATE", sortOrder = "DESC") {
   if (!Array.isArray(slips)) return [];
+  const isDesc = (sortOrder !== "ASC");
+
   return slips.slice().sort((a, b) => {
+    if (sortField === "SLIP_NO") {
+      const slipNoA = String(a.slipNo || a.slipId || "").trim();
+      const slipNoB = String(b.slipNo || b.slipId || "").trim();
+      if (slipNoA !== slipNoB) {
+        const cmp = slipNoA.localeCompare(slipNoB, undefined, { numeric: true });
+        return isDesc ? -cmp : cmp;
+      }
+      const finA = String(a.finalizedAt || a.createdAt || "").trim();
+      const finB = String(b.finalizedAt || b.createdAt || "").trim();
+      return isDesc ? finB.localeCompare(finA) : finA.localeCompare(finB);
+    }
+
+    // デフォルト: DATE (処分日)
     const dateA = getHistoryBusinessDate(a);
     const dateB = getHistoryBusinessDate(b);
     if (dateA !== dateB) {
-      return dateB.localeCompare(dateA);
+      return isDesc ? dateB.localeCompare(dateA) : dateA.localeCompare(dateB);
     }
+    // Tie-breaker 1: finalizedAt
     const finA = String(a.finalizedAt || a.createdAt || "").trim();
     const finB = String(b.finalizedAt || b.createdAt || "").trim();
     if (finA !== finB) {
-      return finB.localeCompare(finA);
+      return isDesc ? finB.localeCompare(finA) : finA.localeCompare(finB);
     }
+    // Tie-breaker 2: slipNo (決定論的ソート)
     const slipNoA = String(a.slipNo || a.slipId || "").trim();
     const slipNoB = String(b.slipNo || b.slipId || "").trim();
-    return slipNoB.localeCompare(slipNoA);
+    const cmp = slipNoA.localeCompare(slipNoB, undefined, { numeric: true });
+    return isDesc ? -cmp : cmp;
   });
 }
 
-// J. 履歴フィルター契約 (FINAL限定、期間From/To、キーワード、署名状態)
+// J. 履歴フィルター契約 (FINAL限定、期間From/To、キーワード、署名状態、ソート)
 function applyHistoryFilters(slips, searchState = {}) {
   if (!Array.isArray(slips)) return [];
   const fromDate = searchState.fromDate ? searchState.fromDate.trim() : "";
@@ -3005,7 +3111,41 @@ function applyHistoryFilters(slips, searchState = {}) {
     return true;
   });
 
-  return sortFinalHistorySlips(filtered);
+  const sortField = searchState.sortField || (typeof historySearchState !== "undefined" && historySearchState.sortField) || "DATE";
+  const sortOrder = searchState.sortOrder || (typeof historySearchState !== "undefined" && historySearchState.sortOrder) || "DESC";
+  return sortFinalHistorySlips(filtered, sortField, sortOrder);
+}
+
+// 順序ラベル動的更新 (Section 14)
+function updateSortOrderLabels() {
+  const fieldEl = document.getElementById("history-sort-field");
+  const orderEl = document.getElementById("history-sort-order");
+  if (!fieldEl || !orderEl) return;
+  const isDate = (fieldEl.value === "DATE");
+  const descOpt = orderEl.querySelector('option[value="DESC"]');
+  const ascOpt = orderEl.querySelector('option[value="ASC"]');
+  if (descOpt) {
+    descOpt.textContent = isDate ? "降順（新しい順）" : "降順";
+  }
+  if (ascOpt) {
+    ascOpt.textContent = isDate ? "昇順（古い順）" : "昇順";
+  }
+}
+
+// 並び替え変更ハンドラ (Section 16: Frontendのみで即時再sort & visibleCount=50リセット)
+function handleHistorySortChange() {
+  const fieldEl = document.getElementById("history-sort-field");
+  const orderEl = document.getElementById("history-sort-order");
+  if (fieldEl) historySearchState.sortField = fieldEl.value;
+  if (orderEl) historySearchState.sortOrder = orderEl.value;
+  historySearchState.visibleCount = 50;
+
+  updateSortOrderLabels();
+
+  const tbody = document.getElementById("history-table-tbody");
+  if (tbody) {
+    renderHistoryRows(tbody, centralHistorySlips);
+  }
 }
 
 // K. 検索実行ハンドラ (Frontendのみで完結、GAS通信なし)
@@ -3015,12 +3155,18 @@ function handleHistorySearch(e) {
   const toEl = document.getElementById("history-search-to");
   const kwEl = document.getElementById("history-search-keyword");
   const sigEl = document.getElementById("history-search-signature");
+  const fieldEl = document.getElementById("history-sort-field");
+  const orderEl = document.getElementById("history-sort-order");
 
   historySearchState.fromDate = fromEl ? fromEl.value.trim() : "";
   historySearchState.toDate = toEl ? toEl.value.trim() : "";
   historySearchState.keyword = kwEl ? kwEl.value.trim() : "";
   historySearchState.signatureStatus = sigEl ? sigEl.value : "ALL";
+  if (fieldEl) historySearchState.sortField = fieldEl.value;
+  if (orderEl) historySearchState.sortOrder = orderEl.value;
   historySearchState.visibleCount = 50; // 検索条件変更時は50件にリセット
+
+  updateSortOrderLabels();
 
   const tbody = document.getElementById("history-table-tbody");
   if (tbody) {
@@ -3028,23 +3174,30 @@ function handleHistorySearch(e) {
   }
 }
 
-// L. 検索クリアハンドラ
+// L. 検索クリアハンドラ (Section 20: sortField="DATE", sortOrder="DESC"へリセット)
 function handleHistorySearchClear() {
   const fromEl = document.getElementById("history-search-from");
   const toEl = document.getElementById("history-search-to");
   const kwEl = document.getElementById("history-search-keyword");
   const sigEl = document.getElementById("history-search-signature");
+  const fieldEl = document.getElementById("history-sort-field");
+  const orderEl = document.getElementById("history-sort-order");
 
   if (fromEl) fromEl.value = "";
   if (toEl) toEl.value = "";
   if (kwEl) kwEl.value = "";
   if (sigEl) sigEl.value = "ALL";
+  if (fieldEl) fieldEl.value = "DATE";
+  if (orderEl) orderEl.value = "DESC";
+  updateSortOrderLabels();
 
   historySearchState = {
     fromDate: "",
     toDate: "",
     keyword: "",
     signatureStatus: "ALL",
+    sortField: "DATE",
+    sortOrder: "DESC",
     visibleCount: 50
   };
 
@@ -3108,7 +3261,8 @@ function renderHistoryRows(tbody, slips) {
 
   // 5. 行の描画 (7列契約: 伝票番号 17%, 処分日 14%, 担当者 13%, 業者名 16%, 署名区分 16%, 状態 8%, 操作 16%)
   visibleSlips.forEach((s) => {
-    const displayDate = formatJstDate(s.date || s.createdAt);
+    const businessDate = (typeof getHistoryBusinessDate === "function") ? getHistoryBusinessDate(s) : (s.date || s.createdAt || "");
+    const displayDate = businessDate ? businessDate.replace(/-/g, "/") : (formatJstDate(s.date || s.createdAt) || "-");
     const slipNo = s.slipNo || s.slipId || "";
     const staffName = s.staffName || "-";
     const isDeleted = s.status === "DELETED";
@@ -3120,10 +3274,10 @@ function renderHistoryRows(tbody, slips) {
       : `<span class="brand-badge" style="background:var(--color-primary); color:var(--color-button-text); font-size:0.75rem;">完了</span>`;
     const printBtn = isDeleted
       ? `<button type="button" class="btn btn-secondary hist-action-btn" disabled style="opacity:0.5; cursor:not-allowed;">印刷</button>`
-      : `<button type="button" class="btn btn-secondary hist-action-btn" onclick="printSlipFromHistory('${escapeHtml(slipNo)}')">印刷</button>`;
+      : `<button type="button" class="btn btn-secondary hist-action-btn" onclick="printSlipFromHistory('${escapeHtml(slipNo)}', this)">印刷</button>`;
     const mobilePrintBtn = isDeleted
       ? `<button type="button" class="btn btn-secondary btn-sm hist-action-btn" disabled style="opacity:0.5; cursor:not-allowed;">印刷</button>`
-      : `<button type="button" class="btn btn-secondary btn-sm hist-action-btn" onclick="printSlipFromHistory('${escapeHtml(slipNo)}')">印刷</button>`;
+      : `<button type="button" class="btn btn-secondary btn-sm hist-action-btn" onclick="printSlipFromHistory('${escapeHtml(slipNo)}', this)">印刷</button>`;
 
     const tr = document.createElement("tr");
     if (isDeleted) {
@@ -3142,7 +3296,7 @@ function renderHistoryRows(tbody, slips) {
         <div class="history-row-3 history-row-bottom">
           <div class="hist-actions">
             ${sigBadge}
-            <button type="button" class="btn btn-secondary btn-sm hist-action-btn" onclick="openHistoryDetailModal('${escapeHtml(slipNo)}')">詳細</button>
+            <button type="button" class="btn btn-secondary btn-sm hist-action-btn" onclick="openHistoryDetailModal('${escapeHtml(slipNo)}', this)">詳細</button>
             ${mobilePrintBtn}
           </div>
         </div>
@@ -3156,7 +3310,7 @@ function renderHistoryRows(tbody, slips) {
       <td class="hist-desktop-col col-actions">
         <div class="hist-desktop-actions-wrap">
           <button type="button" class="btn btn-secondary hist-action-btn"
-            onclick="openHistoryDetailModal('${escapeHtml(slipNo)}')">詳細</button>
+            onclick="openHistoryDetailModal('${escapeHtml(slipNo)}', this)">詳細</button>
           ${printBtn}
         </div>
       </td>
@@ -3168,8 +3322,11 @@ function renderHistoryRows(tbody, slips) {
 // R-T. Read-Only 伝票詳細 Modal (オンデマンド fetchSlip & メモリキャッシュ & Decision C 厳格遵守)
 let currentHistoryDetailSlip = null;
 
-function openHistoryDetailModal(slipNo) {
+function openHistoryDetailModal(slipNo, button = null) {
   if (!slipNo) return;
+  const lockKey = `detail:${slipNo}`;
+  if (historyActionLocks.has(lockKey)) return;
+
   const modal = document.getElementById("history-detail-modal");
   const body = document.getElementById("history-detail-modal-body") || document.getElementById("hist-detail-body");
   const loading = document.getElementById("hist-detail-loading");
@@ -3184,6 +3341,12 @@ function openHistoryDetailModal(slipNo) {
     renderHistoryDetailContent(historyDetailCache.get(slipNo));
     return;
   }
+
+  historyActionLocks.add(lockKey);
+  if (!button && typeof event !== "undefined" && event && event.target) {
+    button = event.target.closest("button");
+  }
+  if (button) setActionButtonBusy(button, true, "取得中...");
 
   // オンデマンド取得 (Loading 表示)
   if (loading) loading.style.display = "block";
@@ -3217,6 +3380,9 @@ function openHistoryDetailModal(slipNo) {
         <p style="font-size:0.85rem; color:var(--color-text-muted);">ネットワーク状態を確認してください。</p>
       </div>
     `;
+  }).finally(() => {
+    if (button) setActionButtonBusy(button, false);
+    historyActionLocks.delete(lockKey);
   });
 }
 
@@ -3417,12 +3583,22 @@ async function prepareAndPrintSlip(s) {
 }
 
 function handleHistoryDetailPrint() {
-  if (currentHistoryDetailSlip) {
+  if (!currentHistoryDetailSlip || currentHistoryDetailSlip.status === "DELETED") return;
+  const slipNo = currentHistoryDetailSlip.slipNo || currentHistoryDetailSlip.slipId;
+  const lockKey = `print:${slipNo}`;
+  if (historyActionLocks.has(lockKey)) return;
+  historyActionLocks.add(lockKey);
+
+  const printBtn = document.getElementById("btn-hist-detail-print");
+  if (printBtn) setActionButtonBusy(printBtn, true, "印刷準備中...");
+  attachPrintBusyRelease(printBtn, lockKey);
+
+  setTimeout(() => {
     prepareAndPrintSlip(currentHistoryDetailSlip);
-  }
+  }, 60);
 }
 
-// 確定伝票論理削除ハンドラ (Section 13, 14, 15)
+// 確定伝票論理削除ハンドラ (Section 13, 14, 15, 35)
 function handleHistoryDetailDelete() {
   if (!currentHistoryDetailSlip) return;
   const slip = currentHistoryDetailSlip;
@@ -3441,6 +3617,13 @@ function handleHistoryDetailDelete() {
     okText: "削除する",
     onOk: async () => {
       const slipNo = slip.slipNo || slip.slipId;
+      const lockKey = `deleteFinal:${slipNo}`;
+      if (typeof historyActionLocks !== "undefined" && historyActionLocks.has(lockKey)) return;
+      if (typeof historyActionLocks !== "undefined") historyActionLocks.add(lockKey);
+
+      const deleteBtn = document.getElementById("btn-hist-detail-delete");
+      if (deleteBtn && typeof setActionButtonBusy === "function") setActionButtonBusy(deleteBtn, true, "削除中...");
+
       const baseCode = slip.baseCode || workingBaseCode || resolvedBaseCode || "";
       const employeeNo = resolvedEmployeeNo || slip.employeeNo || "";
 
@@ -3513,13 +3696,18 @@ function handleHistoryDetailDelete() {
           title: "通信エラー",
           message: (err && err.message) ? err.message : "通信エラーが発生しました。ネットワーク状態を確認してください。"
         });
+      } finally {
+        if (deleteBtn && typeof setActionButtonBusy === "function") setActionButtonBusy(deleteBtn, false);
+        if (typeof historyActionLocks !== "undefined") historyActionLocks.delete(lockKey);
+        if (loading) loading.style.display = "none";
+        if (body) body.style.opacity = "1";
       }
     }
   });
 }
 
-// 印刷処理互換ラッパー (インデックスまたは伝票番号を受け入れ)
-function printSlipFromHistory(param) {
+// 印刷処理互換ラッパー (インデックスまたは伝票番号を受け入れ, button対応, Section 32, 33)
+function printSlipFromHistory(param, button = null) {
   let s = null;
   if (typeof param === "number") {
     s = (filteredHistorySlips && filteredHistorySlips[param]) || centralHistorySlips[param];
@@ -3530,9 +3718,21 @@ function printSlipFromHistory(param) {
   if (!s || s.status === "DELETED") return;
 
   const slipNo = s.slipNo || s.slipId;
-  // 詳細キャッシュまたは既存コード品をチェック
+  const lockKey = `print:${slipNo}`;
+  if (historyActionLocks.has(lockKey)) return;
+  historyActionLocks.add(lockKey);
+
+  if (!button && typeof event !== "undefined" && event && event.target) {
+    button = event.target.closest("button");
+  }
+  if (button) setActionButtonBusy(button, true, "印刷準備中...");
+  attachPrintBusyRelease(button, lockKey);
+
+  // 詳細キャッシュまたは既存コード品をチェック (最低1 paint は feedback が見えるよう setTimeout)
   if (historyDetailCache.has(slipNo)) {
-    prepareAndPrintSlip(historyDetailCache.get(slipNo));
+    setTimeout(() => {
+      prepareAndPrintSlip(historyDetailCache.get(slipNo));
+    }, 60);
     return;
   }
 
@@ -3541,10 +3741,21 @@ function printSlipFromHistory(param) {
       if (res && res.success && res.slip) {
         historyDetailCache.set(slipNo, res.slip);
         prepareAndPrintSlip(res.slip);
+      } else {
+        if (button) setActionButtonBusy(button, false);
+        historyActionLocks.delete(lockKey);
+        showAppModal({ title: "印刷エラー", message: "伝票詳細の取得に失敗しました。" });
       }
+    }).catch(err => {
+      console.error("[app.js] fetchSlip for print error:", err);
+      if (button) setActionButtonBusy(button, false);
+      historyActionLocks.delete(lockKey);
+      showAppModal({ title: "通信エラー", message: "伝票詳細取得中にエラーが発生しました。" });
     });
   } else {
-    prepareAndPrintSlip(s);
+    setTimeout(() => {
+      prepareAndPrintSlip(s);
+    }, 60);
   }
 }
 
@@ -3588,7 +3799,7 @@ function printSlipFromRecord(s) {
   const printVendorEl = document.getElementById("print-info-vendor");
 
   if (printDateEl) {
-    const rawDate = s.date || s.createdAt || "";
+    const rawDate = getHistoryBusinessDate(s) || s.date || s.createdAt || "";
     const canonical = toCanonicalBusinessDate(rawDate);
     printDateEl.textContent = canonical ? canonical.replace(/-/g, "/") : "";
   }
@@ -4572,6 +4783,12 @@ if (typeof module !== "undefined" && module.exports) {
     generateHistoryHeaderCsv,
     exportHistoryCsv,
     printSlipFromHistory,
+    setActionButtonBusy,
+    historyActionLocks,
+    handleHistorySortChange,
+    updateSortOrderLabels,
+    showAppModal,
+    closeGenericModal,
     getHistorySearchState: () => historySearchState,
     getFilteredHistorySlips: () => filteredHistorySlips,
     getHistoryDetailCache: () => historyDetailCache,
@@ -4618,6 +4835,8 @@ if (typeof window !== "undefined") {
   window.applyHistoryFilters = applyHistoryFilters;
   window.handleHistorySearch = handleHistorySearch;
   window.handleHistorySearchClear = handleHistorySearchClear;
+  window.handleHistorySortChange = handleHistorySortChange;
+  window.updateSortOrderLabels = updateSortOrderLabels;
   window.handleHistoryLoadMore = handleHistoryLoadMore;
   window.openHistoryDetailModal = openHistoryDetailModal;
   window.renderHistoryDetailContent = renderHistoryDetailContent;
@@ -4629,7 +4848,11 @@ if (typeof window !== "undefined") {
   window.generateHistoryHeaderCsv = generateHistoryHeaderCsv;
   window.exportHistoryCsv = exportHistoryCsv;
   window.printSlipFromHistory = printSlipFromHistory;
+  window.setActionButtonBusy = setActionButtonBusy;
+  window.historyActionLocks = historyActionLocks;
   window.historyDetailCache = historyDetailCache;
+  window.showAppModal = showAppModal;
+  window.closeGenericModal = closeGenericModal;
 }
 
 // P11 モーダル用 Escape キー & 背景クリックリスナー
