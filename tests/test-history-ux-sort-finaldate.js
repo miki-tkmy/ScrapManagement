@@ -345,10 +345,10 @@ async function main() {
   await runTest("T13", "mobile sort controls fit 320/375/390/430 in index.html & style.css", async () => {
     assert(indexHtml.includes('id="history-sort-field"'), "index.html must contain id=history-sort-field");
     assert(indexHtml.includes('id="history-sort-order"'), "index.html must contain id=history-sort-order");
-    assert(indexHtml.includes('class="form-group history-search-group-sort"'), "index.html must group sort controls in history-search-group-sort");
+    assert(indexHtml.includes('class="history-sort-bar"'), "index.html must place sort controls in history-sort-bar");
 
-    assert(styleCss.includes(".history-search-group-sort {\n    grid-column: span 2;\n  }"), "Mobile media query must span sort group across 2 columns");
-    assert(styleCss.includes("grid-template-columns: 1.4fr 1.2fr 0.9fr 1.3fr auto;"), "Desktop grid must define 5 columns for date, keyword, signature, sort, actions");
+    assert(styleCss.includes(".history-sort-bar {"), "style.css must style .history-sort-bar");
+    assert(styleCss.includes("grid-template-columns: minmax(260px, 1.5fr) minmax(180px, 1fr) minmax(120px, 0.7fr) auto;"), "Desktop grid must define 4 groups");
   });
 
   // -----------------------------------------------------------------------------
@@ -360,7 +360,6 @@ async function main() {
 
     app.setActionButtonBusy(btn, true, "読込中...");
     assert(btn.innerHTML.includes('<span class="btn-spinner" aria-hidden="true"'), "Must reuse existing .btn-spinner class");
-    assert(btn.innerHTML.includes("読込中..."), "Must show loading text");
     assert.strictEqual(btn.disabled, true, "Button must be disabled");
     assert.strictEqual(btn.getAttribute("aria-busy"), "true", "aria-busy must be true");
 
@@ -435,7 +434,7 @@ async function main() {
     app.printSlipFromHistory("SCRAP-LW0099", btn);
     assert(app.historyActionLocks.has("print:SCRAP-LW0099"), "Print lock must be active");
     assert.strictEqual(btn.disabled, true, "Print button must be disabled");
-    assert(btn.innerHTML.includes("印刷準備中..."), "Print button must show 印刷準備中...");
+    assert(btn.innerHTML.includes('<span class="btn-spinner"'), "Print button must show spinner");
 
     // Try second concurrent print
     app.printSlipFromHistory("SCRAP-LW0099", btn);
@@ -534,7 +533,7 @@ async function main() {
       deleteFinalSlip: async () => {
         deleteCalls++;
         assert.strictEqual(deleteBtn.disabled, true, "Delete button must be disabled during deletion");
-        assert(deleteBtn.innerHTML.includes("削除中..."), "Delete button must show 削除中...");
+        assert(deleteBtn.innerHTML.includes('<span class="btn-spinner"'), "Delete button must show spinner");
         assert(app.historyActionLocks.has("deleteFinal:SCRAP-LW0077"), "Lock deleteFinal:SCRAP-LW0077 must be held");
         await new Promise(r => setTimeout(r, 30));
         return { success: true };
@@ -620,7 +619,7 @@ async function main() {
     assert(/\.hist-slip-no\s*\{[^}]*white-space:\s*nowrap\s*!important/s.test(media820), "Mobile slipNo must have white-space: nowrap !important");
 
     // Release ID unified
-    const releaseId = "OPERATION-UX-20261007-01";
+    const releaseId = "OPERATION-UX-20261007-02";
     assert(appJs.includes(`const SCRAP_APP_RUNTIME_REV = "${releaseId}";`));
     assert(styleCss.includes(`--scrap-style-runtime-rev: "${releaseId}";`));
     assert(indexHtml.includes(`id="diag-html-build">${releaseId}</span>`));

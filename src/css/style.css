@@ -15,7 +15,7 @@
 
 :root {
   /* Runtime Asset Identity (Section E) */
-  --scrap-style-runtime-rev: "OPERATION-UX-20261007-01";
+  --scrap-style-runtime-rev: "OPERATION-UX-20261007-02";
 
   /* 正式カラー変数 */
   --color-background: #FFFFFF;
@@ -1302,6 +1302,20 @@ body.modal-open {
   transition: transform 80ms ease, filter 80ms ease;
 }
 
+/* busyボタンの中央スピナー配置 & 外寸固定契約 (Section 18) */
+.btn.is-loading,
+.hist-action-btn.is-loading {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-sizing: border-box !important;
+}
+
+.btn.is-loading .btn-spinner,
+.hist-action-btn.is-loading .btn-spinner {
+  margin: 0 !important;
+}
+
 /* 初回読み込み用 ブロッキング ローディングオーバーレイ (Cache なし時のみ) */
 .master-loading-overlay {
   position: fixed;
@@ -1424,9 +1438,44 @@ body.modal-open {
 
 .history-search-grid {
   display: grid;
-  grid-template-columns: 1.4fr 1.2fr 0.9fr 1.3fr auto;
+  grid-template-columns: minmax(260px, 1.5fr) minmax(180px, 1fr) minmax(120px, 0.7fr) auto;
   gap: 0.6rem;
-  align-items: flex-end;
+  align-items: end;
+}
+
+.history-search-grid .form-label {
+  white-space: nowrap !important;
+}
+
+.history-search-group-keyword {
+  min-width: 0;
+}
+
+.history-search-group-keyword input {
+  width: 100%;
+  min-width: 0;
+}
+
+/* 並び替えバー (Section 8, 9) */
+.history-sort-bar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px 0;
+}
+
+.history-sort-label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--color-subheadline);
+  white-space: nowrap;
+}
+
+.history-sort-select {
+  padding: 0.35rem 0.5rem;
+  font-size: 0.85rem;
+  width: auto;
 }
 
 .history-date-range {
@@ -1711,15 +1760,12 @@ body.modal-open {
     opacity: 0.85 !important;
   }
 
-  /* モバイル検索パネル レイアウト (Section 23) */
+  /* モバイル検索パネル レイアウト (Section 7) */
   .history-search-grid {
     grid-template-columns: 1fr 1fr;
     gap: 0.5rem;
   }
   .history-search-group-date {
-    grid-column: span 2;
-  }
-  .history-search-group-sort {
     grid-column: span 2;
   }
   .history-search-actions {
@@ -1731,6 +1777,23 @@ body.modal-open {
     flex: 1;
     min-height: 44px;
     height: 44px;
+  }
+
+  /* モバイル並び替えバー (Section 13) */
+  .history-sort-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    margin-bottom: 8px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .history-sort-bar .history-sort-select {
+    flex: 1 1 auto;
+    min-width: 120px;
+    height: 38px;
   }
 }
 

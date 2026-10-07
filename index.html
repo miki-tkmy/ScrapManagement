@@ -12,8 +12,8 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="ScrapManagement">
-  <link rel="stylesheet" href="src/css/style.css?v=OPERATION-UX-20261007-01">
-  <link rel="stylesheet" href="src/css/print.css?v=OPERATION-UX-20261007-01" media="print">
+  <link rel="stylesheet" href="src/css/style.css?v=OPERATION-UX-20261007-02">
+  <link rel="stylesheet" href="src/css/print.css?v=OPERATION-UX-20261007-02" media="print">
 </head>
 <body>
   <!-- アプリヘッダー (通常状態では環境名や会社名のバナーを表示しない) -->
@@ -272,19 +272,6 @@
                   <option value="NONE">署名なし</option>
                 </select>
               </div>
-              <div class="form-group history-search-group-sort">
-                <label class="form-label" for="history-sort-field" style="font-size:0.8rem; font-weight:700;">並び替え</label>
-                <div style="display:flex; gap:0.35rem;">
-                  <select id="history-sort-field" class="form-select" onchange="handleHistorySortChange()" style="padding:0.35rem 0.5rem; font-size:0.85rem; flex:1;" aria-label="並び替え項目">
-                    <option value="DATE">処分日</option>
-                    <option value="SLIP_NO">伝票番号</option>
-                  </select>
-                  <select id="history-sort-order" class="form-select" onchange="handleHistorySortChange()" style="padding:0.35rem 0.5rem; font-size:0.85rem; flex:1;" aria-label="並び替え順序">
-                    <option value="DESC">降順（新しい順）</option>
-                    <option value="ASC">昇順（古い順）</option>
-                  </select>
-                </div>
-              </div>
               <div class="history-search-actions">
                 <button type="submit" class="btn btn-primary" id="btn-history-search" style="min-height:44px; padding:0.4rem 1.2rem; font-weight:700;">検索</button>
                 <button type="button" class="btn btn-secondary" id="btn-history-clear" onclick="handleHistorySearchClear()" style="min-height:44px; padding:0.4rem 1rem;">クリア</button>
@@ -299,6 +286,19 @@
               CSV出力
             </button>
           </div>
+        </div>
+
+        <!-- 並び替えバー (Section 8, 9) -->
+        <div class="history-sort-bar">
+          <span class="history-sort-label">並び替え</span>
+          <select id="history-sort-field" class="form-select history-sort-select" onchange="handleHistorySortChange()" aria-label="並び替え項目">
+            <option value="DATE">処分日</option>
+            <option value="SLIP_NO">伝票番号</option>
+          </select>
+          <select id="history-sort-order" class="form-select history-sort-select" onchange="handleHistorySortChange()" aria-label="並び替え順序">
+            <option value="DESC">降順（新しい順）</option>
+            <option value="ASC">昇順（古い順）</option>
+          </select>
         </div>
 
         <div class="materials-table-wrapper">
@@ -456,7 +456,7 @@
           <p style="font-size:0.75rem; color:var(--color-text-muted); margin-bottom:0.6rem;">※個人情報・社員名・秘密情報は一切表示されません</p>
           <div style="font-size:0.8rem; font-family:monospace; line-height:1.6; word-break:break-all;">
             <div style="background:#fff; border:1px solid #ddd; padding:8px; margin-bottom:8px; border-radius:4px;">
-              <div><strong>HTML Build:</strong> <span id="diag-html-build">OPERATION-UX-20261007-01</span></div>
+              <div><strong>HTML Build:</strong> <span id="diag-html-build">OPERATION-UX-20261007-02</span></div>
               <div><strong>App Runtime:</strong> <span id="diag-app-runtime">--</span></div>
               <div><strong>Style Runtime:</strong> <span id="diag-style-runtime">--</span></div>
               <div id="diag-asset-status" style="margin-top:4px; font-weight:bold;"></div>
@@ -479,7 +479,7 @@
         <!-- Frontend Build ID 常時表示 -->
         <div class="settings-section" style="border-top:1px solid var(--color-border); padding-top:1rem; margin-top:1rem; text-align:center;">
           <div id="frontend-build-id-display" style="font-size:0.75rem; color:var(--color-text-muted); font-family:monospace;">
-            Build: OPERATION-UX-20261007-01
+            Build: OPERATION-UX-20261007-02
           </div>
         </div>
       </div>
@@ -666,18 +666,18 @@
   </div>
 
   <!-- スクリプト読み込み (依存順) -->
-  <script src="src/js/config.js?v=OPERATION-UX-20261007-01"></script>
-  <script src="src/js/fixtures.js?v=OPERATION-UX-20261007-01"></script>
-  <script src="src/js/baseService.js?v=OPERATION-UX-20261007-01"></script>
-  <script src="src/js/itemService.js?v=OPERATION-UX-20261007-01"></script>
-  <script src="src/js/quantityEngine.js?v=OPERATION-UX-20261007-01"></script>
-  <script src="src/js/weightEngine.js?v=OPERATION-UX-20261007-01"></script>
-  <script src="src/js/signatureHelper.js?v=OPERATION-UX-20261007-01"></script>
-  <script src="src/js/signature.js?v=OPERATION-UX-20261007-01"></script>
-  <script src="src/js/gasClient-gate3a7-fixpref-20260927.js?v=OPERATION-UX-20261007-01"></script>
-  <script src="src/js/storage.js?v=OPERATION-UX-20261007-01"></script>
-  <script src="src/js/validator.js?v=OPERATION-UX-20261007-01"></script>
-  <script src="src/js/app.js?v=OPERATION-UX-20261007-01"></script>
+  <script src="src/js/config.js?v=OPERATION-UX-20261007-02"></script>
+  <script src="src/js/fixtures.js?v=OPERATION-UX-20261007-02"></script>
+  <script src="src/js/baseService.js?v=OPERATION-UX-20261007-02"></script>
+  <script src="src/js/itemService.js?v=OPERATION-UX-20261007-02"></script>
+  <script src="src/js/quantityEngine.js?v=OPERATION-UX-20261007-02"></script>
+  <script src="src/js/weightEngine.js?v=OPERATION-UX-20261007-02"></script>
+  <script src="src/js/signatureHelper.js?v=OPERATION-UX-20261007-02"></script>
+  <script src="src/js/signature.js?v=OPERATION-UX-20261007-02"></script>
+  <script src="src/js/gasClient-gate3a7-fixpref-20260927.js?v=OPERATION-UX-20261007-02"></script>
+  <script src="src/js/storage.js?v=OPERATION-UX-20261007-02"></script>
+  <script src="src/js/validator.js?v=OPERATION-UX-20261007-02"></script>
+  <script src="src/js/app.js?v=OPERATION-UX-20261007-02"></script>
 </body>
 </html>
 

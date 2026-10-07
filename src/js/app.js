@@ -1,7 +1,7 @@
 // アプリケーション統合コントローラー (app.js)
 // ========================================================================================
 // Runtime Asset Identity (Section E)
-const SCRAP_APP_RUNTIME_REV = "OPERATION-UX-20261007-01";
+const SCRAP_APP_RUNTIME_REV = "OPERATION-UX-20261007-02";
 if (typeof window !== "undefined") {
   window.SCRAP_APP_RUNTIME_REV = SCRAP_APP_RUNTIME_REV;
 }
@@ -2070,48 +2070,37 @@ function setSubmissionBusy(mode, busy) {
   const fullClearBtn = document.getElementById("btn-full-clear");
 
   if (busy) {
-    if (draftBtn) {
-      draftBtn.disabled = true;
-      if (mode === "draft") {
-        draftBtn.setAttribute("aria-busy", "true");
-        draftBtn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>保存中...';
-      }
-    }
-    if (finalizeBtn) {
-      finalizeBtn.disabled = true;
-      if (mode === "final") {
-        finalizeBtn.setAttribute("aria-busy", "true");
-        finalizeBtn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>完了処理中...';
-      }
-    }
-    if (modalFinalizeBtn) {
-      modalFinalizeBtn.disabled = true;
-      if (mode === "final") {
-        modalFinalizeBtn.setAttribute("aria-busy", "true");
-        modalFinalizeBtn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>完了処理中...';
-      }
+    if (mode === "draft") {
+      if (draftBtn) setActionButtonBusy(draftBtn, true);
+      if (finalizeBtn) finalizeBtn.disabled = true;
+      if (modalFinalizeBtn) modalFinalizeBtn.disabled = true;
+    } else if (mode === "final") {
+      if (draftBtn) draftBtn.disabled = true;
+      if (finalizeBtn) setActionButtonBusy(finalizeBtn, true);
+      if (modalFinalizeBtn) setActionButtonBusy(modalFinalizeBtn, true);
+    } else {
+      if (draftBtn) setActionButtonBusy(draftBtn, true);
+      if (finalizeBtn) setActionButtonBusy(finalizeBtn, true);
+      if (modalFinalizeBtn) setActionButtonBusy(modalFinalizeBtn, true);
     }
     if (fullClearBtn) {
       fullClearBtn.disabled = true;
     }
   } else {
     if (draftBtn) {
+      setActionButtonBusy(draftBtn, false);
+      if (!draftBtn.textContent.trim()) draftBtn.textContent = "一時保存";
       draftBtn.disabled = false;
-      draftBtn.removeAttribute("aria-busy");
-      draftBtn.textContent = "一時保存";
-      draftBtn.innerHTML = "一時保存";
     }
     if (finalizeBtn) {
+      setActionButtonBusy(finalizeBtn, false);
+      if (!finalizeBtn.textContent.trim()) finalizeBtn.textContent = "完了";
       finalizeBtn.disabled = false;
-      finalizeBtn.removeAttribute("aria-busy");
-      finalizeBtn.textContent = "完了";
-      finalizeBtn.innerHTML = "完了";
     }
     if (modalFinalizeBtn) {
+      setActionButtonBusy(modalFinalizeBtn, false);
+      if (!modalFinalizeBtn.textContent.trim()) modalFinalizeBtn.textContent = "署名なしで完了";
       modalFinalizeBtn.disabled = false;
-      modalFinalizeBtn.removeAttribute("aria-busy");
-      modalFinalizeBtn.textContent = "署名なしで完了";
-      modalFinalizeBtn.innerHTML = "署名なしで完了";
     }
     if (fullClearBtn) {
       fullClearBtn.disabled = false;
@@ -2969,21 +2958,66 @@ function fetchAndRenderHistory(tbody, baseCode, revision) {
 // 履歴系アクション用ロック & 共通Busy状態管理 (Section 26, 27)
 const historyActionLocks = new Set();
 
-function setActionButtonBusy(button, busy, loadingText = "処理中...") {
+function setActionButtonBusy(button, busy, loadingText = "") {
   if (!button) return;
   if (busy) {
     if (!button.dataset.originalHtml) {
       button.dataset.originalHtml = button.innerHTML;
     }
+    if (button.hasAttribute && button.hasAttribute("aria-label") && !button.dataset.originalAriaLabel) {
+      button.dataset.originalAriaLabel = button.getAttribute("aria-label");
+    }
+    // 元のインラインスタイルを保存
+    if (!button.dataset.originalWidth) {
+      button.dataset.originalWidth = button.style.width || "";
+      button.dataset.originalHeight = button.style.height || "";
+      button.dataset.originalMinWidth = button.style.minWidth || "";
+      button.dataset.originalMinHeight = button.style.minHeight || "";
+    }
+
+    // 外寸計測と固定 (1pxのブレも生じさせない契約: Section 16, 17)
+    const rect = (typeof button.getBoundingClientRect === "function")
+      ? button.getBoundingClientRect()
+      : { width: 0, height: 0 };
+    if (rect.width > 0) {
+      button.style.width = `${rect.width}px`;
+      button.style.minWidth = `${rect.width}px`;
+    }
+    if (rect.height > 0) {
+      button.style.height = `${rect.height}px`;
+      button.style.minHeight = `${rect.height}px`;
+    }
+
     button.disabled = true;
     button.setAttribute("aria-busy", "true");
+    button.setAttribute("aria-label", "処理中");
     button.classList.add("is-loading");
-    button.innerHTML = `<span class="btn-spinner" aria-hidden="true" style="margin-right: 4px; vertical-align: middle;"></span>${loadingText}`;
+    // 文字を表示せず、中央スピナーのみ (Section 15)
+    button.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>';
   } else {
-    if (button.dataset.originalHtml) {
+    // 復元 (Section 17)
+    if (button.dataset.originalHtml !== undefined) {
       button.innerHTML = button.dataset.originalHtml;
       delete button.dataset.originalHtml;
     }
+    if (button.dataset.originalAriaLabel !== undefined) {
+      button.setAttribute("aria-label", button.dataset.originalAriaLabel);
+      delete button.dataset.originalAriaLabel;
+    } else if (button.removeAttribute) {
+      button.removeAttribute("aria-label");
+    }
+
+    if (button.dataset.originalWidth !== undefined) {
+      button.style.width = button.dataset.originalWidth;
+      button.style.height = button.dataset.originalHeight;
+      button.style.minWidth = button.dataset.originalMinWidth;
+      button.style.minHeight = button.dataset.originalMinHeight;
+      delete button.dataset.originalWidth;
+      delete button.dataset.originalHeight;
+      delete button.dataset.originalMinWidth;
+      delete button.dataset.originalMinHeight;
+    }
+
     button.disabled = false;
     button.removeAttribute("aria-busy");
     button.classList.remove("is-loading");
@@ -3125,10 +3159,10 @@ function updateSortOrderLabels() {
   const descOpt = orderEl.querySelector('option[value="DESC"]');
   const ascOpt = orderEl.querySelector('option[value="ASC"]');
   if (descOpt) {
-    descOpt.textContent = isDate ? "降順（新しい順）" : "降順";
+    descOpt.textContent = isDate ? "降順（新しい順）" : "降順（大きい順）";
   }
   if (ascOpt) {
-    ascOpt.textContent = isDate ? "昇順（古い順）" : "昇順";
+    ascOpt.textContent = isDate ? "昇順（古い順）" : "昇順（小さい順）";
   }
 }
 
