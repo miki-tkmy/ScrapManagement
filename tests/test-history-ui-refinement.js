@@ -543,10 +543,10 @@ async function main() {
   });
 
   // -----------------------------------------------------------------------------
-  // T25: OPERATION-UX-20261007-02 unified
+  // T25: OPERATION-UX-20261007-03 unified
   // -----------------------------------------------------------------------------
-  await runTest("T25", "OPERATION-UX-20261007-02 unified across HTML, CSS, JS", async () => {
-    const targetRev = "OPERATION-UX-20261007-02";
+  await runTest("T25", "OPERATION-UX-20261007-03 unified across HTML, CSS, JS", async () => {
+    const targetRev = "OPERATION-UX-20261007-03";
     assert(appJs.includes(`const SCRAP_APP_RUNTIME_REV = "${targetRev}";`), `app.js must declare SCRAP_APP_RUNTIME_REV = ${targetRev}`);
     assert(styleCss.includes(`--scrap-style-runtime-rev: "${targetRev}";`), `style.css must declare --scrap-style-runtime-rev: "${targetRev}"`);
     assert(indexHtml.includes(`id="diag-html-build">${targetRev}</span>`), `index.html must display diag-html-build = ${targetRev}`);

@@ -619,7 +619,7 @@ async function main() {
     assert(/\.hist-slip-no\s*\{[^}]*white-space:\s*nowrap\s*!important/s.test(media820), "Mobile slipNo must have white-space: nowrap !important");
 
     // Release ID unified
-    const releaseId = "OPERATION-UX-20261007-02";
+    const releaseId = "OPERATION-UX-20261007-03";
     assert(appJs.includes(`const SCRAP_APP_RUNTIME_REV = "${releaseId}";`));
     assert(styleCss.includes(`--scrap-style-runtime-rev: "${releaseId}";`));
     assert(indexHtml.includes(`id="diag-html-build">${releaseId}</span>`));

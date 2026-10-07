@@ -1,7 +1,7 @@
 // アプリケーション統合コントローラー (app.js)
 // ========================================================================================
 // Runtime Asset Identity (Section E)
-const SCRAP_APP_RUNTIME_REV = "OPERATION-UX-20261007-02";
+const SCRAP_APP_RUNTIME_REV = "OPERATION-UX-20261007-03";
 if (typeof window !== "undefined") {
   window.SCRAP_APP_RUNTIME_REV = SCRAP_APP_RUNTIME_REV;
 }
@@ -121,6 +121,10 @@ function runBootstrapSequence() {
     {
       name: "initSummaryDates",
       fn: () => initSummaryDates()
+    },
+    {
+      name: "initHistorySearchDefaults",
+      fn: () => initHistorySearchDefaults()
     },
     {
       name: "setupNormalizations",
@@ -3115,6 +3119,46 @@ function sortFinalHistorySlips(slips, sortField = "DATE", sortOrder = "DESC") {
   });
 }
 
+// 履歴初期表示期間計算ヘルパー (Section 9, 10, 11)
+// 前月1日 〜 当月末日 (JST基準・年跨ぎ・閏年対応)
+function getDefaultHistoryPeriod(baseJstDate) {
+  const dateStr = (typeof baseJstDate === "string" && baseJstDate.trim())
+    ? baseJstDate.trim()
+    : getJstDateString();
+
+  const parts = dateStr.split("-");
+  const year = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10); // 1..12
+
+  // 1. 前月1日
+  let prevYear = year;
+  let prevMonth = month - 1;
+  if (prevMonth < 1) {
+    prevMonth = 12;
+    prevYear = year - 1;
+  }
+  const fromDate = `${prevYear}-${String(prevMonth).padStart(2, "0")}-01`;
+
+  // 2. 当月末日 (Date.UTC(year, month, 0) は month 月の末日)
+  const lastDate = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const toDate = `${year}-${String(month).padStart(2, "0")}-${String(lastDate).padStart(2, "0")}`;
+
+  return { fromDate, toDate };
+}
+
+// 履歴検索初期条件設定 (Section 12, 13, 14)
+// アプリ初回起動時に前月1日〜当月末日を設定
+function initHistorySearchDefaults() {
+  const period = getDefaultHistoryPeriod();
+  historySearchState.fromDate = period.fromDate;
+  historySearchState.toDate = period.toDate;
+
+  const fromEl = document.getElementById("history-search-from");
+  const toEl = document.getElementById("history-search-to");
+  if (fromEl) fromEl.value = period.fromDate;
+  if (toEl) toEl.value = period.toDate;
+}
+
 // J. 履歴フィルター契約 (FINAL限定、期間From/To、キーワード、署名状態、ソート)
 function applyHistoryFilters(slips, searchState = {}) {
   if (!Array.isArray(slips)) return [];
@@ -3307,11 +3351,11 @@ function renderHistoryRows(tbody, slips) {
       ? `<span class="brand-badge" style="background:#6b7280; color:#fff; font-size:0.75rem;">削除済み</span>`
       : `<span class="brand-badge" style="background:var(--color-primary); color:var(--color-button-text); font-size:0.75rem;">完了</span>`;
     const printBtn = isDeleted
-      ? `<button type="button" class="btn btn-secondary hist-action-btn" disabled style="opacity:0.5; cursor:not-allowed;">印刷</button>`
-      : `<button type="button" class="btn btn-secondary hist-action-btn" onclick="printSlipFromHistory('${escapeHtml(slipNo)}', this)">印刷</button>`;
+      ? `<button type="button" class="btn btn-secondary hist-action-btn hist-print-btn" disabled style="opacity:0.5; cursor:not-allowed;">印刷</button>`
+      : `<button type="button" class="btn btn-secondary hist-action-btn hist-print-btn" onclick="printSlipFromHistory('${escapeHtml(slipNo)}', this)">印刷</button>`;
     const mobilePrintBtn = isDeleted
-      ? `<button type="button" class="btn btn-secondary btn-sm hist-action-btn" disabled style="opacity:0.5; cursor:not-allowed;">印刷</button>`
-      : `<button type="button" class="btn btn-secondary btn-sm hist-action-btn" onclick="printSlipFromHistory('${escapeHtml(slipNo)}', this)">印刷</button>`;
+      ? `<button type="button" class="btn btn-secondary btn-sm hist-action-btn hist-print-btn" disabled style="opacity:0.5; cursor:not-allowed;">印刷</button>`
+      : `<button type="button" class="btn btn-secondary btn-sm hist-action-btn hist-print-btn" onclick="printSlipFromHistory('${escapeHtml(slipNo)}', this)">印刷</button>`;
 
     const tr = document.createElement("tr");
     if (isDeleted) {
@@ -4823,6 +4867,8 @@ if (typeof module !== "undefined" && module.exports) {
     updateSortOrderLabels,
     showAppModal,
     closeGenericModal,
+    getDefaultHistoryPeriod,
+    initHistorySearchDefaults,
     getHistorySearchState: () => historySearchState,
     getFilteredHistorySlips: () => filteredHistorySlips,
     getHistoryDetailCache: () => historyDetailCache,
@@ -4887,6 +4933,8 @@ if (typeof window !== "undefined") {
   window.historyDetailCache = historyDetailCache;
   window.showAppModal = showAppModal;
   window.closeGenericModal = closeGenericModal;
+  window.getDefaultHistoryPeriod = getDefaultHistoryPeriod;
+  window.initHistorySearchDefaults = initHistorySearchDefaults;
 }
 
 // P11 モーダル用 Escape キー & 背景クリックリスナー

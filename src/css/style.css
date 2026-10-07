@@ -15,7 +15,7 @@
 
 :root {
   /* Runtime Asset Identity (Section E) */
-  --scrap-style-runtime-rev: "OPERATION-UX-20261007-02";
+  --scrap-style-runtime-rev: "OPERATION-UX-20261007-03";
 
   /* 正式カラー変数 */
   --color-background: #FFFFFF;
@@ -1794,6 +1794,14 @@ body.modal-open {
     flex: 1 1 auto;
     min-width: 120px;
     height: 38px;
+  }
+
+  /* モバイル履歴印刷ボタン非表示 (Section 5, 6) */
+  .history-col-mobile .hist-print-btn {
+    display: none !important;
+  }
+  #btn-hist-detail-print {
+    display: none !important;
   }
 }
 
